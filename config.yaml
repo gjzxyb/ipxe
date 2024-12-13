@@ -1,0 +1,41 @@
+server:
+  interface: ""  # 留空让系统自动选择接口
+  server_ip: "192.168.1.88"
+  subnet_mask: "255.255.255.0"
+  broadcast_address: "192.168.1.255"
+
+proxy_mode:
+  enabled: false
+  detect_existing_dhcp: false
+  existing_dhcp_server: "192.168.1.1"
+  proxy_timeout: 5
+
+dhcp:
+  pool_start: "192.168.1.100"
+  pool_end: "192.168.1.222"
+  lease_time: 3600
+
+options:
+  router: "192.168.1.1"
+  dns_servers:
+    - "8.8.8.8"
+    - "8.8.4.4"
+  domain_name: "local"
+
+pxe:
+  enabled: true
+  tftp_server: "192.168.1.88"
+  boot_filename: "pxelinux.0"
+  architecture_specific:
+    # x86 BIOS
+    - arch: 0
+      boot_filename: "pxelinux.0"
+    # x86 EFI 32-bit
+    - arch: 6
+      boot_filename: "bootia32.efi"
+    # x86 EFI 64-bit
+    - arch: 7
+      boot_filename: "bootx64.efi"
+    # ARM 64-bit EFI
+    - arch: 9
+      boot_filename: "bootaa64.efi"

@@ -1,0 +1,1723 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iPXE 服务器控制面板</title>
+    <style>
+        :root {
+            --primary-color: #4361ee;
+            --hover-color: #3730a3;
+            --bg-color: #f8fafc;
+            --text-color: #1e293b;
+            --border-color: #e2e8f0;
+            --card-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            --transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6;
+            color: var(--text-color);
+            background:
+                linear-gradient(to bottom right, rgba(67, 97, 238, 0.05), rgba(55, 48, 163, 0.05)),
+                linear-gradient(to right, #f8fafc 1px, transparent 1px) 0 0 / 50px 50px,
+                linear-gradient(to bottom, #f8fafc 1px, transparent 1px) 0 0 / 50px 50px;
+            background-attachment: fixed;
+            padding: 2rem;
+            position: relative;
+            overflow-x: hidden;
+        }
+
+        /* 添加动态光效背景 */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background:
+                radial-gradient(circle at 0% 0%, rgba(67, 97, 238, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 100% 0%, rgba(55, 48, 163, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 50% 100%, rgba(67, 97, 238, 0.1) 0%, transparent 50%);
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 1rem;
+            box-shadow:
+                var(--card-shadow),
+                0 0 0 1px rgba(67, 97, 238, 0.1);
+            padding: 2rem;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 20px;
+        }
+
+        h1 {
+            color: var(--primary-color);
+            font-size: 24px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        h1 img {
+            width: 32px;
+            height: 32px;
+        }
+
+        .breadcrumb {
+            background: #fff;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            border: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            font-size: 14px;
+        }
+
+        .breadcrumb-icon {
+            margin-right: 10px;
+            color: var(--primary-color);
+        }
+
+        .breadcrumb a {
+            color: var(--primary-color);
+            text-decoration: none;
+            padding: 5px 8px;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+        }
+
+        .breadcrumb a:hover {
+            background-color: var(--bg-color);
+            color: var(--hover-color);
+        }
+
+        .breadcrumb .separator {
+            color: #666;
+            margin: 0 5px;
+        }
+
+        .file-list {
+            list-style: none;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            border: 1px solid var(--border-color);
+            margin-bottom: 8px;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+        }
+
+        .file-item:hover {
+            background: var(--bg-color);
+            transform: translateX(5px);
+        }
+
+        .file-icon {
+            margin-right: 12px;
+            color: var(--primary-color);
+            font-size: 20px;
+            width: 24px;
+            text-align: center;
+        }
+
+        .file-name {
+            flex-grow: 1;
+            display: flex;
+            align-items: center;
+        }
+
+        .file-name a {
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 5px 8px;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+        }
+
+        .file-name a:hover {
+            color: var(--primary-color);
+            background-color: var(--bg-color);
+        }
+
+        .file-meta {
+            color: #666;
+            font-size: 14px;
+            margin-left: 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .file-size, .file-date {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .status {
+            padding: 20px;
+            margin-top: 20px;
+            border-top: 1px solid var(--border-color);
+            color: #666;
+            font-size: 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        #server-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            border-radius: 4px;
+            background-color: #e8f5e9;
+            color: #2e7d32;
+            font-weight: 500;
+        }
+
+        #server-status.offline {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+
+        .empty-message {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+            font-style: italic;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+
+            .file-meta {
+                display: none;
+            }
+
+            h1 {
+                font-size: 20px;
+            }
+
+            .breadcrumb {
+                font-size: 12px;
+                padding: 10px;
+            }
+        }
+
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--primary-color);
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .loading-text {
+            color: #666;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .loading-text::after {
+            content: "...";
+            animation: dots 1.5s steps(4, end) infinite;
+            width: 20px;
+            display: inline-block;
+        }
+
+        @keyframes dots {
+            0%, 20% { content: ""; }
+            40% { content: "."; }
+            60% { content: ".."; }
+            80%, 100% { content: "..."; }
+        }
+
+        .server-controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .server-card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 1rem;
+            padding: 1.5rem;
+            box-shadow: var(--card-shadow);
+            border: 1px solid rgba(67, 97, 238, 0.1);
+            transition: var(--transition);
+            backdrop-filter: blur(5px);
+            -webkit-backdrop-filter: blur(5px);
+        }
+
+        .server-card:hover {
+            transform: translateY(-2px);
+            box-shadow:
+                0 10px 15px -3px rgb(0 0 0 / 0.1),
+                0 0 0 2px rgba(67, 97, 238, 0.2);
+        }
+
+        .server-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .server-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-color);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .server-status {
+            font-size: 14px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .status-running {
+            background-color: #dcfce7;
+            color: #166534;
+        }
+
+        .status-stopped {
+            background-color: #fee2e2;
+            color: #991b1b;
+        }
+
+        .server-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+            text-transform: none;
+            letter-spacing: 0.5px;
+        }
+
+        .btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .btn:active:not(:disabled) {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary-color), var(--hover-color));
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: linear-gradient(135deg, var(--hover-color), var(--primary-color));
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background: linear-gradient(135deg, #dc2626, #b91c1c);
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #64748b, #475569);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: linear-gradient(135deg, #475569, #334155);
+        }
+
+        .btn:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+            transform: none !important;
+            background: #94a3b8 !important;
+            box-shadow: none !important;
+        }
+
+        .btn span {
+            font-size: 1.1em;
+            display: inline-flex;
+            align-items: center;
+            transition: transform 0.2s ease;
+        }
+
+        .btn:hover:not(:disabled) span {
+            transform: scale(1.1);
+        }
+
+        .btn::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255, 255, 255, 0.3) 0%, transparent 60%);
+            transform: translate(-50%, -50%) scale(0);
+            opacity: 0;
+            transition: transform 0.6s ease-out, opacity 0.4s ease-out;
+        }
+
+        .btn:active::after {
+            transform: translate(-50%, -50%) scale(1);
+            opacity: 1;
+            transition: 0s;
+        }
+
+        .config-editor {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 1rem;
+            box-shadow: var(--card-shadow);
+            padding: 1.5rem;
+            margin-top: 2rem;
+            backdrop-filter: blur(5px);
+            -webkit-backdrop-filter: blur(5px);
+            border: 1px solid rgba(67, 97, 238, 0.1);
+        }
+
+        .config-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;  /* 添加这行以支持多个标签自动换行 */
+        }
+
+        .config-tab {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 0.5rem 0.5rem 0 0;
+            cursor: pointer;
+            background: linear-gradient(to bottom, #f8fafc, #f1f5f9);
+            border: 1px solid var(--border-color);
+            border-bottom: none;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .config-tab:hover:not(.active) {
+            background: linear-gradient(to bottom, #f1f5f9, #e2e8f0);
+            transform: translateY(-1px);
+        }
+
+        .config-tab.active {
+            background: linear-gradient(135deg, var(--primary-color), var(--hover-color));
+            color: white;
+            border: none;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .config-tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 80%;
+            height: 2px;
+            background: rgba(255, 255, 255, 0.5);
+        }
+
+        .config-content {
+            background-color: white;
+            border-radius: 4px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .config-textarea {
+            width: 100%;
+            min-height: 400px;
+            font-family: monospace;
+            padding: 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            resize: vertical;
+        }
+
+        .save-config {
+            margin-top: 15px;
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 4px;
+            background-color: white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            z-index: 1000;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .notification.success {
+            background-color: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        .notification.error {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .image-list {
+            border: 1px solid var(--border-color);
+            border-radius: 0.5rem;
+            background: rgba(255, 255, 255, 0.95);
+            overflow: hidden;
+        }
+
+        .image-list-header {
+            display: flex;
+            align-items: center;
+            padding: 1rem;
+            background: linear-gradient(to bottom, #f8fafc, #f1f5f9);
+            border-bottom: 1px solid var(--border-color);
+            justify-content: space-between;
+        }
+
+        .image-list-title {
+            font-weight: 500;
+            color: var(--text-color);
+            font-size: 1.1rem;
+        }
+
+        .image-item {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            align-items: center;
+            transition: var(--transition);
+        }
+
+        .image-item:hover {
+            background: rgba(67, 97, 238, 0.05);
+        }
+
+        .image-name {
+            font-weight: 500;
+            color: var(--text-color);
+        }
+
+        .image-meta {
+            color: #666;
+            font-size: 14px;
+            margin-left: 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .image-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn-sm {
+            padding: 0.5rem 0.75rem;
+            font-size: 0.875rem;
+        }
+
+        .device-list {
+            border: 1px solid var(--border-color);
+            border-radius: 0.5rem;
+            background: rgba(255, 255, 255, 0.95);
+            overflow: hidden;
+        }
+
+        .device-list-header {
+            display: grid;
+            grid-template-columns: 180px 160px 140px 200px 120px auto;
+            padding: 1rem;
+            background: linear-gradient(to bottom, #f8fafc, #f1f5f9);
+            border-bottom: 1px solid var(--border-color);
+            font-weight: 500;
+            color: var(--text-color);
+        }
+
+        .device-item {
+            display: grid;
+            grid-template-columns: 180px 160px 140px 200px 120px auto;
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-color);
+            align-items: center;
+            transition: var(--transition);
+        }
+
+        .device-item:hover {
+            background: rgba(67, 97, 238, 0.05);
+        }
+
+        .device-item:last-child {
+            border-bottom: none;
+        }
+
+        .device-mac {
+            font-family: monospace;
+            font-weight: 500;
+        }
+
+        .device-status {
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            font-size: 0.875rem;
+            width: fit-content;
+        }
+
+        .device-status.online {
+            background-color: #dcfce7;
+            color: #166534;
+        }
+
+        .device-status.offline {
+            background-color: #f3f4f6;
+            color: #6b7280;
+        }
+
+        .device-actions {
+            display: flex;
+            gap: 0.5rem;
+            justify-content: flex-end;
+        }
+
+        .device-bios {
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            background: #f1f5f9;
+            font-size: 0.875rem;
+            width: fit-content;
+        }
+
+        .ipxe-settings {
+            background: white;
+            padding: 2rem;
+            border-radius: 0.5rem;
+            border: 1px solid var(--border-color);
+        }
+
+        .setting-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .setting-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            color: var(--text-color);
+        }
+
+        .config-select {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: 0.5rem;
+            background-color: white;
+            font-size: 1rem;
+            color: var(--text-color);
+            transition: var(--transition);
+        }
+
+        .config-select:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 2px rgba(67, 97, 238, 0.1);
+        }
+
+        .config-select:hover {
+            border-color: var(--primary-color);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>
+                <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%234a90e2'%3E%3Cpath d='M19 20H4a2 2 0 0 1-2-2V6c0-1.11.89-2 2-2h6l2 2h7c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2zm0-12H8.83l-2-2H4v12h15V8z'/%3E%3C/svg%3E" alt="服务器图标">
+                iPXE 服务器控制面板
+            </h1>
+        </header>
+
+        <div class="server-controls">
+            <!-- DHCP服务器卡片 -->
+            <div class="server-card">
+                <div class="server-header">
+                    <div class="server-title">
+                        <span>🌐</span>
+                        DHCP服务器
+                    </div>
+                    <div id="dhcp-status" class="server-status status-stopped">
+                        <span>⚪</span>
+                        检查中...
+                    </div>
+                </div>
+                <div class="server-actions">
+                    <button id="dhcp-start" class="btn btn-primary" onclick="controlDHCPServer('start')">
+                        <span>▶️</span>启动
+                    </button>
+                    <button id="dhcp-stop" class="btn btn-danger" onclick="controlDHCPServer('stop')">
+                        <span>⏹️</span>停止
+                    </button>
+                    <button id="dhcp-restart" class="btn btn-secondary" onclick="controlDHCPServer('restart')">
+                        <span>🔄</span>重启
+                    </button>
+                </div>
+            </div>
+
+            <!-- HTTP服务器卡片 -->
+            <div class="server-card">
+                <div class="server-header">
+                    <div class="server-title">
+                        <span>🌍</span>
+                        HTTP服务器
+                    </div>
+                    <div id="http-status" class="server-status status-stopped">
+                        <span>⚪</span>
+                        检查中...
+                    </div>
+                </div>
+                <div class="server-actions">
+                    <button id="http-start" class="btn btn-primary" onclick="controlHTTPServer('start')">
+                        <span>▶️</span>启动
+                    </button>
+                    <button id="http-stop" class="btn btn-danger" onclick="controlHTTPServer('stop')">
+                        <span>⏹️</span>停止
+                    </button>
+                    <button id="http-restart" class="btn btn-secondary" onclick="controlHTTPServer('restart')">
+                        <span>🔄</span>重启
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 配置编辑器 -->
+        <div class="config-editor">
+            <div class="config-tabs">
+                <button class="config-tab active" onclick="switchConfig('ipxe')">iPXE设置</button>
+                <button class="config-tab" onclick="switchConfig('images')">镜像管理</button>
+                <button class="config-tab" onclick="switchConfig('devices')">设备列表</button>
+                <button class="config-tab" onclick="switchConfig('http')">HTTP配置</button>
+                <button class="config-tab" onclick="switchConfig('dhcp')">DHCP配置</button>
+            </div>
+            <div class="config-content">
+                <div id="config-ipxe" class="tab-content active">
+                    <div class="ipxe-settings">
+                        <div class="setting-group">
+                            <label for="dhcp-mode">DHCP 服务器模式</label>
+                            <select id="dhcp-mode" class="config-select" onchange="saveIPXEConfig()">
+                                <option value="External">External</option>
+                                <option value="Internal">Internal</option>
+                            </select>
+                        </div>
+
+                        <div class="setting-group">
+                            <label for="boot-mode">启动界面模式</label>
+                            <select id="boot-mode" class="config-select" onchange="saveIPXEConfig()">
+                                <option value="GUI">GUI</option>
+                                <option value="CLI">CLI</option>
+                            </select>
+                        </div>
+
+                        <div class="setting-group">
+                            <label for="boot-resolution">启动实时分辨率</label>
+                            <select id="boot-resolution" class="config-select" onchange="saveIPXEConfig()">
+                                <option value="1024x768">1024x768</option>
+                                <option value="800x600">800x600</option>
+                                <option value="1280x1024">1280x1024</option>
+                                <option value="1920x1080">1920x1080</option>
+                            </select>
+                        </div>
+
+                        <div class="setting-group">
+                            <label for="efi-file">EFI 启动文件</label>
+                            <select id="efi-file" class="config-select" onchange="saveIPXEConfig()">
+                                <option value="snponlyx64.efi">snponlyx64.efi</option>
+                                <option value="snponlyx86.efi">snponlyx86.efi</option>
+                                <option value="ipxe.efi">ipxe.efi</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div id="config-images" class="tab-content">
+                    <div class="image-list">
+                        <div class="image-list-header">
+                            <div class="image-list-title">镜像文件</div>
+                            <div class="image-upload">
+                                <button class="btn btn-primary btn-sm" onclick="uploadImage()">
+                                    <span>📤</span>上传
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="config-devices" class="tab-content">
+                    <div class="device-list">
+                        <div class="device-list-header">
+                            <div>MAC 地址</div>
+                            <div>IP 地址</div>
+                            <div>BIOS 模式</div>
+                            <div>启动文件</div>
+                            <div>状态</div>
+                            <div>操作</div>
+                        </div>
+                        <div class="device-item">
+                            <span class="device-mac">00:1A:2B:3C:4D:5E</span>
+                            <span>192.168.1.100</span>
+                            <span class="device-bios">UEFI</span>
+                            <span>ubuntu-22.04.ipxe</span>
+                            <div class="device-status online">在线</div>
+                            <div class="device-actions">
+                                <button class="btn btn-secondary btn-sm" onclick="editDevice('00:1A:2B:3C:4D:5E')">
+                                    <span>📝</span>编辑
+                                </button>
+                                <button class="btn btn-danger btn-sm" onclick="deleteDevice('00:1A:2B:3C:4D:5E')">
+                                    <span>🗑️</span>删除
+                                </button>
+                            </div>
+                        </div>
+                        <!-- 添加更多示例设备 -->
+                        <div class="device-item">
+                            <span class="device-mac">00:2C:4D:5E:6F:7G</span>
+                            <span>192.168.1.101</span>
+                            <span class="device-bios">Legacy</span>
+                            <span>windows-pe.ipxe</span>
+                            <div class="device-status offline">离线</div>
+                            <div class="device-actions">
+                                <button class="btn btn-secondary btn-sm" onclick="editDevice('00:2C:4D:5E:6F:7G')">
+                                    <span>📝</span>编辑
+                                </button>
+                                <button class="btn btn-danger btn-sm" onclick="deleteDevice('00:2C:4D:5E:6F:7G')">
+                                    <span>🗑️</span>删除
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="config-http" class="tab-content">
+                    <textarea id="http-config-editor" class="config-textarea" spellcheck="false"></textarea>
+                    <div class="save-config">
+                        <button class="btn btn-secondary" onclick="reloadConfig('http')">
+                            <span>🔄</span>重新加载
+                        </button>
+                        <button class="btn btn-primary" onclick="saveConfig('http')">
+                            <span>💾</span>保存配置
+                        </button>
+                    </div>
+                </div>
+                <div id="config-dhcp" class="tab-content">
+                    <textarea id="config-editor" class="config-textarea" spellcheck="false"></textarea>
+                    <div class="save-config">
+                        <button class="btn btn-secondary" onclick="reloadConfig('dhcp')">
+                            <span>🔄</span>重新加载
+                        </button>
+                        <button class="btn btn-primary" onclick="saveConfig('dhcp')">
+                            <span>💾</span>保存配置
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <footer class="status">
+            <div id="server-info">正在获取服务器信息...</div>
+        </footer>
+    </div>
+
+    <script>
+        let currentConfig = 'ipxe';
+        let configs = {
+            dhcp: '',
+            ipxe: '',
+            http: ''
+        };
+
+        // 加载配置文件
+        async function loadConfig(type) {
+            try {
+                const response = await fetch(`/api/config/${type}`);
+                const config = await response.text();
+                configs[type] = config;
+                if (currentConfig === type) {
+                    document.getElementById('config-editor').value = config;
+                }
+            } catch (error) {
+                showNotification('加载配置文件失败', 'error');
+            }
+        }
+
+        // 切换配置文件
+        function switchConfig(type) {
+            currentConfig = type;
+            // 更新标签状态
+            document.querySelectorAll('.config-tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            // 更新内容显示
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            document.getElementById(`config-${type}`).classList.add('active');
+
+            // 根据类型加载不同内容
+            if (type === 'dhcp' || type === 'http') {
+                document.getElementById(type === 'dhcp' ? 'config-editor' : 'http-config-editor').value = configs[type];
+            } else if (type === 'images') {
+                loadImages();
+            } else if (type === 'devices') {
+                loadDevices();
+            }
+        }
+
+        // 重新加载配置
+        async function reloadConfig(type) {
+            try {
+                const response = await fetch(`/api/config/${type}`);
+                const config = await response.text();
+                configs[type] = config;
+                const editorId = type === 'dhcp' ? 'config-editor' : 'http-config-editor';
+                document.getElementById(editorId).value = config;
+                showNotification(`${type.toUpperCase()}配置已重新加载`, 'success');
+            } catch (error) {
+                showNotification(`加载${type.toUpperCase()}配置失败`, 'error');
+            }
+        }
+
+        // 保存配置
+        async function saveConfig(type) {
+            const editorId = type === 'dhcp' ? 'config-editor' : 'http-config-editor';
+            const config = document.getElementById(editorId).value;
+            try {
+                const response = await fetch(`/api/config/${type}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'text/plain'
+                    },
+                    body: config
+                });
+                if (response.ok) {
+                    showNotification(`${type.toUpperCase()}配置保存成功`, 'success');
+                    configs[type] = config;
+                } else {
+                    showNotification(`${type.toUpperCase()}配置保存失败`, 'error');
+                }
+            } catch (error) {
+                showNotification(`${type.toUpperCase()}配置保存失败`, 'error');
+            }
+        }
+
+        // 更新HTTP服务器状态
+        async function updateHTTPStatus() {
+            const statusElement = document.getElementById('http-status');
+            const serverInfoElement = document.getElementById('server-info');
+
+            // 更新为检查中状态
+            statusElement.className = 'server-status';
+            statusElement.innerHTML = `
+                <span>🔄</span>
+                检查中...
+            `;
+
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 3000); // 3秒超时
+
+                const response = await fetch('/api/status', {
+                    signal: controller.signal,
+                    headers: {
+                        'Cache-Control': 'no-cache',
+                        'Pragma': 'no-cache'
+                    }
+                });
+
+                clearTimeout(timeoutId);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                const isRunning = data.status === 'running';
+
+                statusElement.className = `server-status ${isRunning ? 'status-running' : 'status-stopped'}`;
+                statusElement.innerHTML = `
+                    <span>${isRunning ? '🟢' : '🔴'}</span>
+                    ${isRunning ? '运行中' : '已停止'}
+                `;
+
+                // 更新按钮状态
+                document.getElementById('http-start').disabled = isRunning;
+                document.getElementById('http-stop').disabled = !isRunning;
+                document.getElementById('http-restart').disabled = !isRunning;
+
+                // 更新服务器信息
+                if (isRunning) {
+                    serverInfoElement.innerHTML = `
+                        <span title="服务器地址">🌐 ${data.server_address}:${data.server_port}</span>
+                        <span style="margin: 0 10px">|</span>
+                        <span title="运行时间">⏱️ ${formatUptime(data.uptime)}</span>
+                    `;
+                } else {
+                    serverInfoElement.innerHTML = `
+                        <span title="状态">⚠️ 服务器已停止</span>
+                    `;
+                }
+            } catch (error) {
+                console.error('获取HTTP状态失败:', error);
+
+                // 根据错误类型设置不同的状态显示
+                if (error.name === 'AbortError') {
+                    statusElement.className = 'server-status status-stopped';
+                    statusElement.innerHTML = `
+                        <span>⚠️</span>
+                        响应超时
+                    `;
+                } else if (error.message.includes('Failed to fetch') ||
+                         error.message.includes('ERR_CONNECTION_REFUSED')) {
+                    statusElement.className = 'server-status status-stopped';
+                    statusElement.innerHTML = `
+                        <span>🔴</span>
+                        已停止
+                    `;
+                } else {
+                    statusElement.className = 'server-status status-stopped';
+                    statusElement.innerHTML = `
+                        <span>⚠️</span>
+                        连接失败
+                    `;
+                }
+
+                // 更新按钮状态为可启动
+                document.getElementById('http-start').disabled = false;
+                document.getElementById('http-stop').disabled = true;
+                document.getElementById('http-restart').disabled = true;
+
+                // 更新服务器信息
+                serverInfoElement.innerHTML = `
+                    <span title="错误">⚠️ 无法连接到服务器</span>
+                `;
+            }
+        }
+
+        // 更新DHCP服务器状态
+        async function updateDHCPStatus() {
+            const statusElement = document.getElementById('dhcp-status');
+            try {
+                const response = await fetch('/api/dhcp/status');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                const isRunning = data.status === 'running';
+
+                statusElement.className = `server-status ${isRunning ? 'status-running' : 'status-stopped'}`;
+                statusElement.innerHTML = `
+                    <span>${isRunning ? '🟢' : '🔴'}</span>
+                    ${isRunning ? '运行中' : '已停止'}
+                `;
+
+                // 更新按钮状态
+                document.getElementById('dhcp-start').disabled = isRunning;
+                document.getElementById('dhcp-stop').disabled = !isRunning;
+                document.getElementById('dhcp-restart').disabled = !isRunning;
+            } catch (error) {
+                console.error('获取DHCP状态失败:', error);
+                statusElement.className = 'server-status status-stopped';
+                statusElement.innerHTML = `
+                    <span>⚠️</span>
+                    连接失败
+                `;
+            }
+        }
+
+        // 格式化运行时间
+        function formatUptime(seconds) {
+            const days = Math.floor(seconds / 86400);
+            const hours = Math.floor((seconds % 86400) / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const parts = [];
+
+            if (days > 0) parts.push(`${days}天`);
+            if (hours > 0) parts.push(`${hours}小时`);
+            if (minutes > 0) parts.push(`${minutes}分钟`);
+
+            return parts.length > 0 ? parts.join(' ') : '刚刚启动';
+        }
+
+        // 控制DHCP服务器
+        async function controlDHCPServer(action) {
+            const button = document.querySelector(`#dhcp-${action}`);
+            button.disabled = true;
+            try {
+                const response = await fetch(`/api/dhcp/${action}`, {
+                    method: 'POST'
+                });
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                if (data.success) {
+                    showNotification(`DHCP服务器${getActionName(action)}成功`, 'success');
+                    // 立即更新状态
+                    const statusElement = document.getElementById('dhcp-status');
+                    const isRunning = data.status === 'running';
+                    statusElement.className = `server-status ${isRunning ? 'status-running' : 'status-stopped'}`;
+                    statusElement.innerHTML = `
+                        <span>${isRunning ? '🟢' : '🔴'}</span>
+                        ${isRunning ? '运行中' : '已停止'}
+                    `;
+                    // 更新按钮状态
+                    document.getElementById('dhcp-start').disabled = isRunning;
+                    document.getElementById('dhcp-stop').disabled = !isRunning;
+                    document.getElementById('dhcp-restart').disabled = !isRunning;
+                } else {
+                    const errorMessage = data.error ? `DHCP服务器${getActionName(action)}失败: ${data.error}` : `DHCP服务${getActionName(action)}失败`;
+                    console.error(errorMessage);
+                    showNotification(errorMessage, 'error');
+                }
+            } catch (error) {
+                console.error(`DHCP服务器${getActionName(action)}失败:`, error);
+                showNotification(`DHCP服务器${getActionName(action)}失败: ${error.message}`, 'error');
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        // 检查服务器状态
+        async function checkServerStatus() {
+            try {
+                const response = await fetch('/api/status');
+                if (!response.ok) {
+                    return false;
+                }
+                const data = await response.json();
+                return data.status === 'running';
+            } catch (error) {
+                return false;
+            }
+        }
+
+        // 等待服务器启动
+        async function waitForServer(maxAttempts = 30, interval = 1000) {
+            for (let i = 0; i < maxAttempts; i++) {
+                try {
+                    const response = await fetch('/api/status');
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.status === 'running') {
+                            return true;
+                        }
+                    }
+                } catch (error) {
+                    // 忽略错误，继续等待
+                }
+                await new Promise(resolve => setTimeout(resolve, interval));
+            }
+            return false;
+        }
+
+        // 控制HTTP服务器
+        async function controlHTTPServer(action) {
+            const button = document.querySelector(`#http-${action}`);
+            button.disabled = true;
+            const statusElement = document.getElementById('http-status');
+
+            try {
+                // 更新UI状态
+                statusElement.className = 'server-status';
+                statusElement.innerHTML = `
+                    <span>🔄</span>
+                    ${action === 'restart' ? '重启中' : (action === 'start' ? '启动中' : '停止中')}...
+                `;
+
+                if (action === 'stop') {
+                    // 停止操作的特殊处理
+                    try {
+                        // 发送停止命令
+                        await fetch('/api/http/stop', {
+                            method: 'POST',
+                            headers: {
+                                'Cache-Control': 'no-cache',
+                                'Pragma': 'no-cache'
+                            }
+                        });
+                    } catch (error) {
+                        // 忽略任何错误，继续检查状态
+                    }
+
+                    // 等待服务器停止
+                    let maxAttempts = 10;
+                    let attempts = 0;
+                    let stopped = false;
+
+                    while (attempts < maxAttempts && !stopped) {
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        try {
+                            const response = await fetch('/api/status', {
+                                headers: {
+                                    'Cache-Control': 'no-cache',
+                                    'Pragma': 'no-cache'
+                                }
+                            });
+                            // 如果能连接到服务器，继续等待
+                            if (response.ok) {
+                                const data = await response.json();
+                                if (data.status !== 'running') {
+                                    stopped = true;
+                                }
+                            }
+                        } catch (error) {
+                            // 如果连接失败，说明服务器已停止
+                            if (error.message.includes('Failed to fetch') ||
+                                error.message.includes('ERR_CONNECTION_RESET') ||
+                                error.message.includes('ERR_CONNECTION_REFUSED')) {
+                                stopped = true;
+                            }
+                        }
+                        attempts++;
+                    }
+
+                    // 无论如何都认为停止成功
+                    await updateHTTPStatus();
+                    showNotification('HTTP服务器停止成功', 'success');
+                    return;
+                } else {
+                    // 启动或重启操作
+                    try {
+                        const response = await fetch(`/api/http/${action}`, {
+                            method: 'POST',
+                            headers: {
+                                'Cache-Control': 'no-cache',
+                                'Pragma': 'no-cache'
+                            }
+                        });
+                        const data = await response.json();
+                        if (!data.success) {
+                            throw new Error(`HTTP服务器${getActionName(action)}失败`);
+                        }
+                    } catch (error) {
+                        if ((action === 'restart' || action === 'start') &&
+                            (error.message.includes('Failed to fetch') ||
+                             error.message.includes('ERR_CONNECTION_RESET') ||
+                             error.message.includes('ERR_CONNECTION_REFUSED'))) {
+                            // 这是预期的错误继续等待服务器启动
+                        } else {
+                            throw error;
+                        }
+                    }
+
+                    // 等待服务器启动
+                    let retries = 30;
+                    let serverUp = false;
+
+                    while (retries > 0 && !serverUp) {
+                        try {
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                            const response = await fetch('/api/status', {
+                                headers: {
+                                    'Cache-Control': 'no-cache',
+                                    'Pragma': 'no-cache'
+                                }
+                            });
+
+                            if (response.ok) {
+                                const data = await response.json();
+                                if (data.status === 'running') {
+                                    serverUp = true;
+                                    await updateHTTPStatus();
+                                    showNotification(`HTTP服务器${getActionName(action)}成功`, 'success');
+                                    break;
+                                }
+                            }
+                        } catch (error) {
+                            statusElement.innerHTML = `
+                                <span>🔄</span>
+                                ${action === 'restart' ? '重启中' : '启动中'} (剩余重试: ${retries})...
+                            `;
+                            console.log(`等待服务器响应... 剩余重试次数: ${retries}`);
+                        }
+                        retries--;
+                    }
+
+                    if (!serverUp) {
+                        throw new Error(`服务器${getActionName(action)}超时`);
+                    }
+                }
+            } catch (error) {
+                // 对于停止操作，忽略所有错误
+                if (action === 'stop') {
+                    await updateHTTPStatus();
+                    showNotification('HTTP服务器停止成功', 'success');
+                } else {
+                    console.error(`HTTP服务器${getActionName(action)}失败:`, error);
+                    showNotification(`HTTP服务器${getActionName(action)}失败: ${error.message}`, 'error');
+                }
+            } finally {
+                button.disabled = false;
+                // 最后再次检查状态
+                setTimeout(async () => {
+                    try {
+                        await updateHTTPStatus();
+                    } catch (error) {
+                        // 对于停止操作，忽略最终状态更新失败的错误
+                        if (action !== 'stop') {
+                            console.error('最终状态更新失败:', error);
+                        }
+                    }
+                }, 3000);
+            }
+        }
+
+        // 获取操作名称
+        function getActionName(action) {
+            const names = {
+                'start': '启动',
+                'stop': '停止',
+                'restart': '重启'
+            };
+            return names[action] || action;
+        }
+
+        // 显示通知
+        function showNotification(message, type) {
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.innerHTML = `
+                <span>${type === 'success' ? '✅' : '❌'}</span>
+                <span>${message}</span>
+            `;
+            document.body.appendChild(notification);
+
+            setTimeout(() => {
+                notification.style.animation = 'slideOut 0.3s ease-out';
+                setTimeout(() => {
+                    notification.remove();
+                }, 300);
+            }, 3000);
+        }
+
+        // 页面加载完成后执行
+        document.addEventListener('DOMContentLoaded', () => {
+            loadConfig('ipxe');
+            loadConfig('dhcp');
+            loadConfig('http');
+            updateDHCPStatus();
+            updateHTTPStatus();
+
+            let statusCheckInterval;
+            let consecutiveErrors = 0;
+            const maxConsecutiveErrors = 3;
+
+            // 创建状态检查函数
+            const checkStatus = async () => {
+                try {
+                    await updateHTTPStatus();
+                    await updateDHCPStatus();
+                    consecutiveErrors = 0;  // 重置错误计数
+                } catch (error) {
+                    consecutiveErrors++;
+                    console.error('状态检查失败:', error);
+
+                    // 如果连续失败次数过多，增加检查间隔
+                    if (consecutiveErrors >= maxConsecutiveErrors) {
+                        clearInterval(statusCheckInterval);
+                        statusCheckInterval = setInterval(checkStatus, 30000);  // 切换到30秒间隔
+                        console.log('检测到多次连接失败，已切换到低频率检查模式');
+                    }
+                }
+            };
+
+            // 开始定期检查
+            statusCheckInterval = setInterval(checkStatus, 10000);
+
+            // 添加页面可见性变化监听
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') {
+                    // 页面变为可见时立即检查一次
+                    checkStatus();
+                }
+            });
+        });
+
+        // 更新上传镜像函数
+        async function uploadImage() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.iso,.img';
+
+            input.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                // 检查文件大小
+                if (file.size > 10 * 1024 * 1024 * 1024) { // 10GB 限制
+                    showNotification('文件过大，请选择小于 10GB 的文件', 'error');
+                    return;
+                }
+
+                const formData = new FormData();
+                formData.append('file', file, encodeURIComponent(file.name));
+
+                try {
+                    showNotification('开始上传镜像...', 'info');
+                    const response = await fetch('/iso/upload', {
+                        method: 'POST',
+                        headers: {
+                            'Accept': 'application/json'
+                        },
+                        body: formData
+                    });
+
+                    if (!response.ok) {
+                        let errorMessage;
+                        try {
+                            const contentType = response.headers.get('content-type');
+                            if (contentType && contentType.includes('application/json')) {
+                                const errorData = await response.json();
+                                errorMessage = errorData.error || '上传失败';
+                            } else {
+                                const errorText = await response.text();
+                                if (errorText.includes('Error code explanation:')) {
+                                    errorMessage = errorText.split('<p>Message: ')[1].split('</p>')[0];
+                                } else {
+                                    errorMessage = errorText || response.statusText;
+                                }
+                            }
+                        } catch (e) {
+                            errorMessage = '上传失败: ' + response.statusText;
+                        }
+                        throw new Error(errorMessage);
+                    }
+
+                    showNotification('镜像上传成功', 'success');
+                    await loadImages();
+                } catch (error) {
+                    console.error('上传镜像失败:', error);
+                    let errorMessage = error.message;
+                    if (errorMessage.includes('codec can\'t decode')) {
+                        errorMessage = '服务器无法处理此文件，请确保文件格式正确';
+                    }
+                    showNotification(`上传失败: ${errorMessage}`, 'error');
+                }
+            };
+
+            input.click();
+        }
+
+        // 更新加载镜像列表函数
+        async function loadImages() {
+            const imageList = document.querySelector('.image-list');
+            const header = imageList.querySelector('.image-list-header');
+
+            try {
+                // 显示加载状态
+                imageList.innerHTML = '';
+                imageList.appendChild(header);
+                const loadingDiv = document.createElement('div');
+                loadingDiv.className = 'image-list-loading';
+                loadingDiv.innerHTML = `
+                    <div class="loading"></div>
+                    <p>正在加载镜像列表...</p>
+                `;
+                imageList.appendChild(loadingDiv);
+
+                const response = await fetch('/iso');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const text = await response.text();
+
+                // 解析目录列表HTML
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(text, 'text/html');
+                const files = Array.from(doc.querySelectorAll('a')).filter(a =>
+                    a.href.toLowerCase().endsWith('.iso') ||
+                    a.href.toLowerCase().endsWith('.img')
+                );
+
+                // 清除现有内容，保留表头
+                imageList.innerHTML = '';
+                imageList.appendChild(header);
+
+                if (files.length === 0) {
+                    const emptyDiv = document.createElement('div');
+                    emptyDiv.className = 'image-list-empty';
+                    emptyDiv.textContent = '暂无镜像文件';
+                    imageList.appendChild(emptyDiv);
+                    return;
+                }
+
+                // 添加镜像列表
+                for (const file of files) {
+                    const fileName = decodeURIComponent(file.href.split('/').pop());
+                    const statResponse = await fetch(`/iso/${fileName}`, { method: 'HEAD' });
+                    const size = statResponse.headers.get('content-length');
+                    const lastModified = statResponse.headers.get('last-modified');
+
+                    const imageElement = document.createElement('div');
+                    imageElement.className = 'image-item';
+                    imageElement.innerHTML = `
+                        <div class="image-info">
+                            <span class="image-name">${fileName}</span>
+                            <div class="image-meta">
+                                <span>大小: ${formatSize(size)}</span>
+                                <span>更新时间: ${new Date(lastModified).toLocaleDateString('zh-CN')}</span>
+                            </div>
+                        </div>
+                        <div class="image-actions">
+                            <button class="btn btn-danger btn-sm" onclick="deleteImage('${fileName}')">
+                                <span>🗑️</span>删除
+                            </button>
+                        </div>
+                    `;
+                    imageList.appendChild(imageElement);
+                }
+            } catch (error) {
+                console.error('加载镜像列表失败:', error);
+                imageList.innerHTML = '';
+                imageList.appendChild(header);
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'image-list-error';
+                errorDiv.innerHTML = `
+                    <p>⚠️ 加载镜像列表失败</p>
+                    <p style="font-size: 0.9em; margin-top: 0.5em;">${error.message}</p>
+                    <button class="btn btn-secondary btn-sm" onclick="loadImages()" style="margin-top: 1rem;">
+                        <span>🔄</span>重试
+                    </button>
+                `;
+                imageList.appendChild(errorDiv);
+            }
+        }
+
+        // 更新删除镜像函数
+        async function deleteImage(fileName) {
+            if (!confirm(`确定要删除镜像 "${fileName}" 吗？此操作不可恢复。`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/iso/${encodeURIComponent(fileName)}`, {
+                    method: 'DELETE'
+                });
+
+                if (!response.ok) {
+                    throw new Error(`删除失败: ${response.statusText}`);
+                }
+
+                showNotification('镜像删除成功', 'success');
+                await loadImages();
+            } catch (error) {
+                console.error('删除镜像失败:', error);
+                showNotification(`删除失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 加载设备列表
+        async function loadDevices() {
+            try {
+                const response = await fetch('/api/devices');
+                const devices = await response.json();
+                const deviceList = document.querySelector('.device-list');
+
+                // 保留表头
+                const header = deviceList.querySelector('.device-list-header');
+                deviceList.innerHTML = '';
+                deviceList.appendChild(header);
+
+                // 添加设备列表
+                devices.forEach(device => {
+                    const deviceElement = document.createElement('div');
+                    deviceElement.className = 'device-item';
+                    deviceElement.innerHTML = `
+                        <span class="device-mac">${device.mac}</span>
+                        <span>${device.ip || '-'}</span>
+                        <span class="device-bios">${device.bios_mode || 'Unknown'}</span>
+                        <span>${device.boot_file || '-'}</span>
+                        <div class="device-status ${device.online ? 'online' : 'offline'}">
+                            ${device.online ? '在线' : '离线'}
+                        </div>
+                        <div class="device-actions">
+                            <button class="btn btn-secondary btn-sm" onclick="editDevice('${device.mac}')">
+                                <span>📝</span>编辑
+                            </button>
+                            <button class="btn btn-danger btn-sm" onclick="deleteDevice('${device.mac}')">
+                                <span>🗑️</span>删除
+                            </button>
+                        </div>
+                    `;
+                    deviceList.appendChild(deviceElement);
+                });
+            } catch (error) {
+                showNotification('加载设备列表失败', 'error');
+            }
+        }
+
+        // 格式化文件大小
+        function formatSize(bytes) {
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let size = bytes;
+            let unitIndex = 0;
+            while (size >= 1024 && unitIndex < units.length - 1) {
+                size /= 1024;
+                unitIndex++;
+            }
+            return `${size.toFixed(1)}${units[unitIndex]}`;
+        }
+
+        // 格式化日期
+        function formatDate(timestamp) {
+            return new Date(timestamp).toLocaleDateString('zh-CN');
+        }
+
+        function editDevice(mac) {
+            // TODO: 实现设备编辑功能
+            console.log('编辑设备:', mac);
+        }
+
+        function deleteDevice(mac) {
+            // TODO: 实现设备删除功能
+            if (confirm(`确定要删除设备 ${mac} 吗？`)) {
+                console.log('删除设备:', mac);
+            }
+        }
+
+        // 添加新的iPXE配置相关函数
+        async function loadIPXEConfig() {
+            try {
+                const response = await fetch('/api/config/ipxe');
+                const config = await response.json();
+
+                // 设置下拉框的值
+                document.getElementById('dhcp-mode').value = config.dhcp_mode || 'External';
+                document.getElementById('boot-mode').value = config.boot_mode || 'GUI';
+                document.getElementById('boot-resolution').value = config.boot_resolution || '1024x768';
+                document.getElementById('efi-file').value = config.efi_file || 'snponlyx64.efi';
+            } catch (error) {
+                showNotification('加载iPXE配置失败', 'error');
+            }
+        }
+
+        async function saveIPXEConfig() {
+            try {
+                const config = {
+                    dhcp_mode: document.getElementById('dhcp-mode').value,
+                    boot_mode: document.getElementById('boot-mode').value,
+                    boot_resolution: document.getElementById('boot-resolution').value,
+                    efi_file: document.getElementById('efi-file').value
+                };
+
+                const response = await fetch('/api/config/ipxe', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(config)
+                });
+
+                if (response.ok) {
+                    showNotification('iPXE配置已更新', 'success');
+                } else {
+                    throw new Error('保存失败');
+                }
+            } catch (error) {
+                showNotification('保存iPXE配置失败', 'error');
+            }
+        }
+    </script>
+</body>
+</html>

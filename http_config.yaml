@@ -1,0 +1,82 @@
+server:
+  address: "0.0.0.0"        # 监听地址
+  port: 8080               # 监听端口
+  root_directory: "./"     # 文件根目录
+  ssl:
+    enabled: false         # 启用SSL/TLS
+    cert_file: "cert.pem"  # SSL证书文件
+    key_file: "key.pem"    # SSL密钥文件
+
+security:
+  cors_enabled: true       # 启用CORS
+  allowed_origins:         # 允许的源
+    - "http://localhost:8080"
+    - "https://localhost:8443"
+  allowed_methods:         # 允许的HTTP方法
+    - "GET"
+    - "POST"
+    - "OPTIONS"
+  max_file_size: 104857600 # 最大文件大小 (100MB)
+  auth:
+    enabled: false          # 禁用身份验证
+    type: "basic"          # 认证类型 (basic/token)
+    users:                 # 用户列表（用户名：密码哈希）
+      admin: "sha256:abc123:8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918"  # 密码为 admin
+  rate_limit:
+    enabled: true          # 启用速率限制
+    requests: 100          # 请求数量
+    period: 60             # 时间周期（秒）
+  allowed_ips:            # IP白名单
+    - "127.0.0.1"
+    - "192.168.1.0/24"
+  blocked_ips:            # IP黑名单
+    - "10.0.0.0/8"
+  path_restrictions:      # 路径访问限制
+    denied_patterns:      # 禁止访问的路径模式
+      - '^\.'             # 隐藏文件
+    allowed_extensions:   # 允许的文件扩展名
+      - ""               # 允许访问目录
+      - ".txt"
+      - ".pdf"
+      - ".jpg"
+      - ".png"
+      - ".html"
+      - ".js"
+      - ".css"
+      - ".ico"
+      - ".gif"
+      - ".md"
+      - ".efi"
+      - ".0"
+  xss_protection: true    # 启用XSS保护
+  content_security_policy: "default-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"  # CSP策略
+  frame_options: "DENY"   # X-Frame-Options
+  hsts_enabled: true      # HTTP严格传输安全
+
+logging:
+  level: "INFO"           # 日志级别
+  file: "http_server.log" # 日志文件
+  format: "%(asctime)s - %(levelname)s - %(message)s"
+  audit_log: "audit.log"  # 审计日志
+  max_size: 10485760      # 日志文件最大大小 (10MB)
+  backup_count: 5         # 保留的日志文件数量
+
+api:
+  enabled: true           # 启用API
+  endpoints:              # API端点
+    - "/api/status"       # 服务器状态
+    - "/api/config"       # 服务器配置
+    - "/api/files"        # 文件列表
+    - "/api/dhcp/status"  # DHCP服务器状态
+    - "/api/dhcp/start"   # 启动DHCP服务器
+    - "/api/dhcp/stop"    # 停止DHCP服务器
+    - "/api/dhcp/restart" # 重启DHCP服务器
+    - "/api/http/start"   # 启动HTTP服务器
+    - "/api/http/stop"    # 停止HTTP服务器
+    - "/api/http/restart" # 重启HTTP服务器
+  token_required: false   # 禁用API令牌认证
+
+mime_types:              # 自定义MIME类型
+  ".md": "text/markdown"
+  ".yaml": "text/yaml"
+  ".yml": "text/yaml"
