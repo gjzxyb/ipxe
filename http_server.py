@@ -364,7 +364,7 @@ class SecureHTTPServer:
                 sock.close()
             except socket.error as e:
                 if e.errno == errno.EADDRINUSE:
-                    # 如果是重启操作��不要立即清理端口
+                    # 如果是重启操作不要立即清理端口
                     if len(sys.argv) > 1 and sys.argv[1] == 'restart':
                         logging.info(f"Port {port} is in use, but this is a restart operation")
                     else:
@@ -498,7 +498,7 @@ class SecureHTTPServer:
             raise
 
     def stop(self):
-        """停止服务��"""
+        """停止服务器"""
         logging.info("Stopping HTTP server...")
         if self.httpd:
             try:
@@ -702,6 +702,7 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.config = config or {}
         self.server_instance = server_instance
         self.security = SecurityManager(self.config)
+        self.iso_manager = ISOManager()  # 添加ISOManager实例
 
         # 设置正确的目录
         if 'directory' not in kwargs:
@@ -749,6 +750,20 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                     self.send_file_content('config.yaml')
                 elif path == '/api/config/http':
                     self.send_file_content('http_config.yaml')
+                elif path == '/api/iso/mapping':
+                    # 获取ISO映射关系
+                    mapping = self.iso_manager.get_iso_mapping()
+                    self.send_json_response(mapping)
+                    return
+                elif path.startswith('/api/iso/info/'):
+                    # 获取单个ISO的信息
+                    iso_name = os.path.basename(path)
+                    info = self.iso_manager.get_iso_info(iso_name)
+                    if info:
+                        self.send_json_response(info)
+                    else:
+                        self.send_error(404, "ISO not found")
+                    return
                 else:
                     self.send_error(404, "API endpoint not found")
                 return
@@ -863,34 +878,49 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                     iso_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'iso')
                     os.makedirs(iso_dir, exist_ok=True)
 
-                    # 创建目标文件
-                    target_path = os.path.join(iso_dir, os.path.basename(filename))
-                    with open(target_path, 'wb') as out_file:
-                        out_file.write(file_content)
+                    # 在文件成功保存后，添加处理ISO文件的代码
+                    try:
+                        # 保存文件到iso目录
+                        target_path = os.path.join(iso_dir, os.path.basename(filename))
+                        with open(target_path, 'wb') as out_file:
+                            out_file.write(file_content)
 
-                    # 验证文件名和扩展名
-                    if not filename:
-                        self.send_error(400, "No filename specified")
-                        return
+                        # 验证文件名和扩展名
+                        if not filename:
+                            self.send_error(400, "No filename specified")
+                            return
 
-                    if not filename.lower().endswith(('.iso', '.img')):
-                        self.send_error(400, "Invalid file type")
-                        return
+                        if not filename.lower().endswith(('.iso', '.img')):
+                            self.send_error(400, "Invalid file type")
+                            return
 
-                    # 验证文件大小
-                    if os.path.getsize(target_path) < 1024:  # 至少要1KB
-                        os.remove(target_path)
-                        self.send_error(400, "Invalid file: too small")
-                        return
+                        # 验证文件大小
+                        if os.path.getsize(target_path) < 1024:  # 至少要1KB
+                            os.remove(target_path)
+                            self.send_error(400, "Invalid file: too small")
+                            return
 
-                    # 发送成功响应
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'application/json')
-                    self.end_headers()
-                    self.wfile.write(json.dumps({
-                        'success': True,
-                        'message': 'File uploaded successfully'
-                    }).encode())
+                        # 处理上传的ISO文件
+                        if self.iso_manager.process_iso(filename):
+                            self.send_response(200)
+                            self.send_header('Content-Type', 'application/json')
+                            self.end_headers()
+                            self.wfile.write(json.dumps({
+                                'success': True,
+                                'message': 'File uploaded and processed successfully'
+                            }).encode())
+                        else:
+                            # 如果处理失败，删除上传的文件
+                            os.remove(target_path)
+                            self.send_error(500, "Failed to process ISO file")
+                            return
+
+                    except Exception as e:
+                        logging.error(f"Error handling file upload: {str(e)}")
+                        # 如果出错，尝试清理已上传的文件
+                        if 'target_path' in locals() and os.path.exists(target_path):
+                            os.remove(target_path)
+                        self.send_error(500, str(e))
 
                 except Exception as e:
                     logging.error(f"Error handling file upload: {str(e)}")
@@ -1283,7 +1313,7 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                 except:
                     pass
 
-            # 只有在确实检测到进程运行时才置状态为running
+            # 只有在确实检测到进程运行时才置状��为running
             if is_running:
                 status = 'running'
                 last_activity = time.strftime('%Y-%m-%d %H:%M:%S')
@@ -1410,7 +1440,13 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                     return
 
                 try:
+                    # 先删除解压的文件
+                    if not self.iso_manager.delete_iso(filename):
+                        raise Exception("Failed to delete ISO mapping and extracted files")
+
+                    # 再删除ISO文件
                     os.remove(file_path)
+
                     self.send_response(200)
                     self.send_header('Content-Type', 'application/json')
                     self.end_headers()
@@ -1440,7 +1476,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     def signal_handler(signum, frame):
-        """信号处理器"""
+        """信号处理"""
         if signum in (signal.SIGINT, signal.SIGTERM):
             logging.info("Received shutdown signal...")
             if server:

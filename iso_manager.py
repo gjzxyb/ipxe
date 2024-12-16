@@ -77,12 +77,26 @@ class ISOManager:
             json.dump(self.mapping, f, ensure_ascii=False, indent=2)
 
     def generate_unique_id(self):
-        """生成唯一ID"""
-        return str(uuid.uuid4())
+        """生成唯一ID（使用简单的数字）"""
+        # 获取现有的数字ID列表
+        existing_ids = set()
+        for id_str in self.mapping.keys():
+            try:
+                existing_ids.add(int(id_str))
+            except ValueError:
+                continue  # 忽略非数字ID
+
+        # 从1开始找到第一个未使用的数字
+        new_id = 1
+        while str(new_id) in self.mapping or new_id in existing_ids:
+            new_id += 1
+
+        return str(new_id)
 
     def extract_iso(self, iso_path, target_dir):
         """使用7z解压ISO文件"""
         try:
+            self.logger.info(f"开始解压ISO文件: {iso_path}")
             # 使用7z解压ISO
             if os.name == 'nt':
                 result = subprocess.run(
@@ -101,8 +115,10 @@ class ISOManager:
                 )
 
             if result.returncode != 0:
-                raise Exception(f"7z解压失败: {result.stderr}")
+                self.logger.error(f"7z解压失败: {result.stderr}")
+                return False
 
+            self.logger.info(f"ISO文件解压成功: {iso_path}")
             return True
         except Exception as e:
             self.logger.error(f"解压ISO失败: {e}")
@@ -169,6 +185,61 @@ class ISOManager:
             if dir_path.is_dir() and not any(str(dir_path).endswith(str(p)) for p in valid_paths):
                 self.logger.info(f"删除未使用的目录: {dir_path}")
                 shutil.rmtree(dir_path, ignore_errors=True)
+
+    def delete_iso(self, iso_name):
+        """删除指定的ISO文件及其解压目录"""
+        try:
+            # 查找对应的映射记录
+            iso_id = None
+            for id, info in self.mapping.items():
+                if info['iso_name'] == iso_name:
+                    iso_id = id
+                    break
+
+            if iso_id is None:
+                self.logger.warning(f"未找到ISO文件的映射记录: {iso_name}")
+                return True  # 如果没有映射记录，认为删除成功
+
+            # 删除解压目录
+            pxe_path = self.base_dir / self.mapping[iso_id]['pxe_path']
+            if pxe_path.exists():
+                self.logger.info(f"删除解压目录: {pxe_path}")
+                shutil.rmtree(pxe_path)
+
+            # 从映射中删除记录
+            del self.mapping[iso_id]
+            self.save_mapping()
+
+            self.logger.info(f"成功删除ISO映射: {iso_name}")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"删除ISO文件失败 {iso_name}: {e}")
+            return False
+
+    def get_iso_mapping(self):
+        """获取ISO文件与解压目录的映射关系"""
+        result = {}
+        for iso_id, info in self.mapping.items():
+            result[info['iso_name']] = {
+                'id': iso_id,
+                'pxe_path': str(self.base_dir / info['pxe_path']),
+                'created_at': info['created_at'],
+                'size': info['size']
+            }
+        return result
+
+    def get_iso_info(self, iso_name):
+        """获取指定ISO文件的信息"""
+        for iso_id, info in self.mapping.items():
+            if info['iso_name'] == iso_name:
+                return {
+                    'id': iso_id,
+                    'pxe_path': str(self.base_dir / info['pxe_path']),
+                    'created_at': info['created_at'],
+                    'size': info['size']
+                }
+        return None
 
 if __name__ == "__main__":
     manager = ISOManager()

@@ -595,12 +595,10 @@
         }
 
         .image-meta {
-            color: #666;
-            font-size: 14px;
-            margin-left: 20px;
-            display: flex;
-            align-items: center;
-            gap: 15px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin-top: 5px;
         }
 
         .image-actions {
@@ -720,6 +718,27 @@
 
         .config-select:hover {
             border-color: var(--primary-color);
+        }
+
+        .warning {
+            color: #f59e0b;
+            font-style: italic;
+        }
+
+        .iso-details {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .iso-details h3 {
+            margin-bottom: 15px;
+            color: var(--primary-color);
+        }
+
+        .iso-details p {
+            margin: 8px 0;
         }
     </style>
 </head>
@@ -1262,7 +1281,7 @@
                                 }
                             }
                         } catch (error) {
-                            // 如果连接失败，说明服务器已停止
+                            // 如果连���失败，说明服务器已停止
                             if (error.message.includes('Failed to fetch') ||
                                 error.message.includes('ERR_CONNECTION_RESET') ||
                                 error.message.includes('ERR_CONNECTION_REFUSED')) {
@@ -1505,24 +1524,13 @@
             const header = imageList.querySelector('.image-list-header');
 
             try {
-                // 显示加载状态
-                imageList.innerHTML = '';
-                imageList.appendChild(header);
-                const loadingDiv = document.createElement('div');
-                loadingDiv.className = 'image-list-loading';
-                loadingDiv.innerHTML = `
-                    <div class="loading"></div>
-                    <p>正在加载镜像列表...</p>
-                `;
-                imageList.appendChild(loadingDiv);
+                // 获取ISO映射关系
+                const mappingResponse = await fetch('/api/iso/mapping');
+                const mapping = await mappingResponse.json();
 
+                // 获取文件列表
                 const response = await fetch('/iso');
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
                 const text = await response.text();
-
-                // 解析目录列表HTML
                 const parser = new DOMParser();
                 const doc = parser.parseFromString(text, 'text/html');
                 const files = Array.from(doc.querySelectorAll('a')).filter(a =>
@@ -1545,6 +1553,7 @@
                 // 添加镜像列表
                 for (const file of files) {
                     const fileName = decodeURIComponent(file.href.split('/').pop());
+                    const mappingInfo = mapping[fileName];
                     const statResponse = await fetch(`/iso/${fileName}`, { method: 'HEAD' });
                     const size = statResponse.headers.get('content-length');
                     const lastModified = statResponse.headers.get('last-modified');
@@ -1557,9 +1566,22 @@
                             <div class="image-meta">
                                 <span>大小: ${formatSize(size)}</span>
                                 <span>更新时间: ${new Date(lastModified).toLocaleDateString('zh-CN')}</span>
+                                ${mappingInfo ? `
+                                    <span>解压目录: ${mappingInfo.pxe_path}</span>
+                                    <span>处理时间: ${new Date(mappingInfo.created_at).toLocaleString('zh-CN')}</span>
+                                ` : '<span class="warning">未处理</span>'}
                             </div>
                         </div>
                         <div class="image-actions">
+                            ${mappingInfo ? `
+                                <button class="btn btn-secondary btn-sm" onclick="viewISODetails('${fileName}')">
+                                    <span>📋</span>详情
+                                </button>
+                            ` : `
+                                <button class="btn btn-primary btn-sm" onclick="processISO('${fileName}')">
+                                    <span>🔄</span>处理
+                                </button>
+                            `}
                             <button class="btn btn-danger btn-sm" onclick="deleteImage('${fileName}')">
                                 <span>🗑️</span>删除
                             </button>
@@ -1569,18 +1591,7 @@
                 }
             } catch (error) {
                 console.error('加载镜像列表失败:', error);
-                imageList.innerHTML = '';
-                imageList.appendChild(header);
-                const errorDiv = document.createElement('div');
-                errorDiv.className = 'image-list-error';
-                errorDiv.innerHTML = `
-                    <p>⚠️ 加载镜像列表失败</p>
-                    <p style="font-size: 0.9em; margin-top: 0.5em;">${error.message}</p>
-                    <button class="btn btn-secondary btn-sm" onclick="loadImages()" style="margin-top: 1rem;">
-                        <span>🔄</span>重试
-                    </button>
-                `;
-                imageList.appendChild(errorDiv);
+                showNotification('加载镜像列表失败: ' + error.message, 'error');
             }
         }
 
@@ -1682,7 +1693,7 @@
                 const response = await fetch('/api/config/ipxe');
                 const config = await response.json();
 
-                // 设置下拉框的值
+                // 设置下拉的值
                 document.getElementById('dhcp-mode').value = config.dhcp_mode || 'External';
                 document.getElementById('boot-mode').value = config.boot_mode || 'GUI';
                 document.getElementById('boot-resolution').value = config.boot_resolution || '1024x768';
@@ -1716,6 +1727,46 @@
                 }
             } catch (error) {
                 showNotification('保存iPXE配置失败', 'error');
+            }
+        }
+
+        // 添加查看ISO详情的函数
+        async function viewISODetails(fileName) {
+            try {
+                const response = await fetch(`/api/iso/info/${fileName}`);
+                const info = await response.json();
+
+                // 显示详情对话框
+                const detailsHTML = `
+                    <div class="iso-details">
+                        <h3>ISO文件详情</h3>
+                        <p><strong>文件名:</strong> ${fileName}</p>
+                        <p><strong>ID:</strong> ${info.id}</p>
+                        <p><strong>解压目录:</strong> ${info.pxe_path}</p>
+                        <p><strong>处理时间:</strong> ${new Date(info.created_at).toLocaleString('zh-CN')}</p>
+                        <p><strong>文件大小:</strong> ${formatSize(info.size)}</p>
+                    </div>
+                `;
+
+                // 使用你喜欢的对话框库显示详情，这里使用简单的alert作为示例
+                alert(detailsHTML.replace(/<[^>]+>/g, ''));
+            } catch (error) {
+                showNotification('获取ISO详情失败: ' + error.message, 'error');
+            }
+        }
+
+        // 添加手动处理ISO的函数
+        async function processISO(fileName) {
+            try {
+                const response = await fetch(`/api/iso/process/${fileName}`, { method: 'POST' });
+                if (response.ok) {
+                    showNotification('ISO文件处理成功', 'success');
+                    await loadImages();  // 刷新列表
+                } else {
+                    throw new Error(await response.text());
+                }
+            } catch (error) {
+                showNotification('处理ISO文件失败: ' + error.message, 'error');
             }
         }
     </script>
