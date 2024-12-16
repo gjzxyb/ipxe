@@ -155,7 +155,8 @@ class ISOManager:
                 'iso_name': iso_name,
                 'created_at': datetime.now().isoformat(),
                 'size': os.path.getsize(iso_path),
-                'pxe_path': str(target_dir.relative_to(self.base_dir))
+                'pxe_path': str(target_dir.relative_to(self.base_dir)),
+                'url_path': f'/pxe/{iso_id}'
             }
             self.save_mapping()
 
@@ -221,10 +222,11 @@ class ISOManager:
         """获取ISO文件与解压目录的映射关系"""
         result = {}
         for iso_id, info in self.mapping.items():
+            pxe_path = str(self.base_dir / info['pxe_path'])
             result[info['iso_name']] = {
                 'id': iso_id,
-                'pxe_path': str(self.base_dir / info['pxe_path']),
-                'created_at': info['created_at'],
+                'pxe_path': pxe_path,  # 本地路径
+                'url_path': info.get('url_path', f'/pxe/{iso_id}'),  # 网络访问路径
                 'size': info['size']
             }
         return result
@@ -233,10 +235,11 @@ class ISOManager:
         """获取指定ISO文件的信息"""
         for iso_id, info in self.mapping.items():
             if info['iso_name'] == iso_name:
+                pxe_path = str(self.base_dir / info['pxe_path'])
                 return {
                     'id': iso_id,
-                    'pxe_path': str(self.base_dir / info['pxe_path']),
-                    'created_at': info['created_at'],
+                    'pxe_path': pxe_path,  # 本地路径
+                    'url_path': info.get('url_path', f'/pxe/{iso_id}'),  # 网络访问路径
                     'size': info['size']
                 }
         return None

@@ -740,6 +740,34 @@
         .iso-details p {
             margin: 8px 0;
         }
+
+        input[type="file"] {
+            display: none;  /* 隐藏默认的文件输入框 */
+        }
+
+        .custom-file-upload {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            background: linear-gradient(135deg, var(--primary-color), var(--hover-color));
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: var(--transition);
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .custom-file-upload:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .custom-file-upload span {
+            font-size: 1.1em;
+        }
     </style>
 </head>
 <body>
@@ -816,7 +844,7 @@
                 <div id="config-ipxe" class="tab-content active">
                     <div class="ipxe-settings">
                         <div class="setting-group">
-                            <label for="dhcp-mode">DHCP 服务器模式</label>
+                            <label for="dhcp-mode">DHCP 服务器��式</label>
                             <select id="dhcp-mode" class="config-select" onchange="saveIPXEConfig()">
                                 <option value="External">External</option>
                                 <option value="Internal">Internal</option>
@@ -856,9 +884,9 @@
                         <div class="image-list-header">
                             <div class="image-list-title">镜像文件</div>
                             <div class="image-upload">
-                                <button class="btn btn-primary btn-sm" onclick="uploadImage()">
-                                    <span>📤</span>上传
-                                </button>
+                                <label class="custom-file-upload" onclick="uploadImage()">
+                                    <span>📤</span>上传镜像
+                                </label>
                             </div>
                         </div>
                     </div>
@@ -1130,7 +1158,7 @@
                     ${isRunning ? '运行中' : '已停止'}
                 `;
 
-                // 更新按钮状态
+                // 更新按钮��态
                 document.getElementById('dhcp-start').disabled = isRunning;
                 document.getElementById('dhcp-stop').disabled = !isRunning;
                 document.getElementById('dhcp-restart').disabled = !isRunning;
@@ -1281,7 +1309,7 @@
                                 }
                             }
                         } catch (error) {
-                            // 如果连���失败，说明服务器已停止
+                            // 如果连接失败，说明服务器已停止
                             if (error.message.includes('Failed to fetch') ||
                                 error.message.includes('ERR_CONNECTION_RESET') ||
                                 error.message.includes('ERR_CONNECTION_REFUSED')) {
@@ -1296,7 +1324,7 @@
                     showNotification('HTTP服务器停止成功', 'success');
                     return;
                 } else {
-                    // 启动或重启操作
+                    // 启动或重启��作
                     try {
                         const response = await fetch(`/api/http/${action}`, {
                             method: 'POST',
@@ -1453,19 +1481,25 @@
             });
         });
 
-        // 更新上传镜像函数
-        async function uploadImage() {
+        // 修改 uploadImage 函数
+        function uploadImage() {
             const input = document.createElement('input');
             input.type = 'file';
             input.accept = '.iso,.img';
+            input.style.display = 'none';
+            document.body.appendChild(input);
 
-            input.onchange = async (e) => {
+            input.onchange = async function(e) {
                 const file = e.target.files[0];
-                if (!file) return;
+                if (!file) {
+                    document.body.removeChild(input);
+                    return;
+                }
 
                 // 检查文件大小
                 if (file.size > 10 * 1024 * 1024 * 1024) { // 10GB 限制
                     showNotification('文件过大，请选择小于 10GB 的文件', 'error');
+                    document.body.removeChild(input);
                     return;
                 }
 
@@ -1483,35 +1517,16 @@
                     });
 
                     if (!response.ok) {
-                        let errorMessage;
-                        try {
-                            const contentType = response.headers.get('content-type');
-                            if (contentType && contentType.includes('application/json')) {
-                                const errorData = await response.json();
-                                errorMessage = errorData.error || '上传失败';
-                            } else {
-                                const errorText = await response.text();
-                                if (errorText.includes('Error code explanation:')) {
-                                    errorMessage = errorText.split('<p>Message: ')[1].split('</p>')[0];
-                                } else {
-                                    errorMessage = errorText || response.statusText;
-                                }
-                            }
-                        } catch (e) {
-                            errorMessage = '上传失败: ' + response.statusText;
-                        }
-                        throw new Error(errorMessage);
+                        throw new Error(await response.text());
                     }
 
                     showNotification('镜像上传成功', 'success');
                     await loadImages();
                 } catch (error) {
                     console.error('上传镜像失败:', error);
-                    let errorMessage = error.message;
-                    if (errorMessage.includes('codec can\'t decode')) {
-                        errorMessage = '服务器无法处理此文件，请确保文件格式正确';
-                    }
-                    showNotification(`上传失败: ${errorMessage}`, 'error');
+                    showNotification(`上传失败: ${error.message}`, 'error');
+                } finally {
+                    document.body.removeChild(input);
                 }
             };
 
@@ -1567,8 +1582,8 @@
                                 <span>大小: ${formatSize(size)}</span>
                                 <span>更新时间: ${new Date(lastModified).toLocaleDateString('zh-CN')}</span>
                                 ${mappingInfo ? `
-                                    <span>解压目录: ${mappingInfo.pxe_path}</span>
-                                    <span>处理时间: ${new Date(mappingInfo.created_at).toLocaleString('zh-CN')}</span>
+                                    <span>本地路径: ${mappingInfo.pxe_path}</span>
+                                    <span>访问地址: <a href="${mappingInfo.url_path}" target="_blank">${mappingInfo.url_path}</a></span>
                                 ` : '<span class="warning">未处理</span>'}
                             </div>
                         </div>
@@ -1681,7 +1696,7 @@
         }
 
         function deleteDevice(mac) {
-            // TODO: 实现设备删除功能
+            // TODO: 实��设备删除功能
             if (confirm(`确定要删除设备 ${mac} 吗？`)) {
                 console.log('删除设备:', mac);
             }
@@ -1693,7 +1708,7 @@
                 const response = await fetch('/api/config/ipxe');
                 const config = await response.json();
 
-                // 设置下拉的值
+                // 设置下拉值
                 document.getElementById('dhcp-mode').value = config.dhcp_mode || 'External';
                 document.getElementById('boot-mode').value = config.boot_mode || 'GUI';
                 document.getElementById('boot-resolution').value = config.boot_resolution || '1024x768';
@@ -1742,8 +1757,8 @@
                         <h3>ISO文件详情</h3>
                         <p><strong>文件名:</strong> ${fileName}</p>
                         <p><strong>ID:</strong> ${info.id}</p>
-                        <p><strong>解压目录:</strong> ${info.pxe_path}</p>
-                        <p><strong>处理时间:</strong> ${new Date(info.created_at).toLocaleString('zh-CN')}</p>
+                        <p><strong>本地路径:</strong> ${info.pxe_path}</p>
+                        <p><strong>访问地址:</strong> <a href="${info.url_path}" target="_blank">${info.url_path}</a></p>
                         <p><strong>文件大小:</strong> ${formatSize(info.size)}</p>
                     </div>
                 `;

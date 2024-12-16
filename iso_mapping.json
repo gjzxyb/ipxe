@@ -1,8 +1,9 @@
 {
   "1": {
     "iso_name": "cloudedesktop.iso",
-    "created_at": "2024-12-16T12:28:03.766766",
+    "created_at": "2024-12-16T12:36:40.770104",
     "size": 428609536,
-    "pxe_path": "pxe\\1"
+    "pxe_path": "pxe\\1",
+    "url_path": "/pxe/1"
   }
 }
