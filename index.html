@@ -1015,7 +1015,7 @@
                                     <span>📝</span>编辑
                                 </button>
                                 <button class="btn btn-danger btn-sm" onclick="deleteDevice('00:1A:2B:3C:4D:5E')">
-                                    <span>🗑���</span>删除
+                                    <span>🗑️</span>删除
                                 </button>
                             </div>
                         </div>
@@ -1122,7 +1122,7 @@
                 configs[type] = config;
                 const editorId = type === 'dhcp' ? 'config-editor' : 'http-config-editor';
                 document.getElementById(editorId).value = config;
-                showNotification(`${type.toUpperCase()}配置已重���加载`, 'success');
+                showNotification(`${type.toUpperCase()}配置已重新加载`, 'success');
             } catch (error) {
                 showNotification(`加载${type.toUpperCase()}配置失败`, 'error');
             }
@@ -1354,7 +1354,7 @@
                         }
                     }
                 } catch (error) {
-                    // ��略错误，继续等待
+                    // 略错误，继续等待
                 }
                 await new Promise(resolve => setTimeout(resolve, interval));
             }
@@ -1485,7 +1485,7 @@
                     }
 
                     if (!serverUp) {
-                        throw new Error(`服务器${getActionName(action)}超时`);
+                        throw new Error(`服务器${getActionName(action)}超���`);
                     }
                 }
             } catch (error) {
@@ -1686,7 +1686,7 @@
                     return;
                 }
 
-                // 添加镜像��表
+                // 添加镜像列表
                 for (const file of files) {
                     const fileName = decodeURIComponent(file.href.split('/').pop());
                     const mappingInfo = mapping[fileName];
@@ -1715,7 +1715,7 @@
                                 </button>
                             ` : `
                                 <button class="btn btn-primary btn-sm" onclick="processISO('${fileName}')">
-                                    <span>🔄</span>处理
+                                    <span>��</span>处理
                                 </button>
                             `}
                             <button class="btn btn-danger btn-sm" onclick="deleteImage('${fileName}')">
@@ -1816,10 +1816,39 @@
             console.log('编辑设备:', mac);
         }
 
-        function deleteDevice(mac) {
-            // TODO: 实现设备删除功能
-            if (confirm(`确定要删除设备 ${mac} 吗？`)) {
-                console.log('删除设备:', mac);
+        async function deleteDevice(mac) {
+            if (!confirm(`确定要删除设备 ${mac} 吗？此操作不可恢复。`)) {
+                return;
+            }
+
+            try {
+                // 将MAC地址中的冒号替换为连字符，以避免URL编码问题
+                const formattedMac = mac.toLowerCase().replace(/:/g, '-');
+                const response = await fetch(`/api/devices/${formattedMac}`, {
+                    method: 'DELETE'
+                });
+
+                const contentType = response.headers.get("content-type");
+                if (contentType && contentType.indexOf("application/json") !== -1) {
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.error || data.message || '删除失败');
+                    }
+                    showNotification(data.message || '设备已删除', 'success');
+                } else {
+                    if (!response.ok) {
+                        const text = await response.text();
+                        // 尝试从HTML响应中提取错误消息
+                        const messageMatch = text.match(/Message: ([^<]+)/);
+                        throw new Error(messageMatch ? messageMatch[1] : '删除失败');
+                    }
+                    showNotification('设备已删除', 'success');
+                }
+
+                await loadDevices();  // 重新加载设备列表
+            } catch (error) {
+                console.error('删除设备失败:', error);
+                showNotification('删除设备失败: ' + error.message, 'error');
             }
         }
 

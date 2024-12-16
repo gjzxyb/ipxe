@@ -338,7 +338,7 @@ class SecureHTTPServer:
                         except:
                             pass
             else:  # Unix
-                # 使用lsof找到进程
+                # 使用lsof找��进程
                 try:
                     output = subprocess.check_output(['lsof', '-ti', f':{port}'], text=True)
                     for pid in output.splitlines():
@@ -543,7 +543,7 @@ def get_dhcp_pid_file():
         return '/var/run/dhcp_server.pid' if os.geteuid() == 0 else os.path.join(tempfile.gettempdir(), 'dhcp_server.pid')
 
 def check_dhcp_server_running():
-    """检查DHCP服务器是否在运行"""
+    """检查DHCP服务器是否运行"""
     try:
         # 获取正确的PID文件路径
         pid_file = get_dhcp_pid_file()
@@ -751,19 +751,20 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                 elif path == '/api/config/http':
                     self.send_file_content('http_config.yaml')
                 elif path == '/api/iso/mapping':
-                    # 获取ISO映射关系
                     mapping = self.iso_manager.get_iso_mapping()
                     self.send_json_response(mapping)
-                    return
                 elif path.startswith('/api/iso/info/'):
-                    # 获取单个ISO的信息
                     iso_name = os.path.basename(path)
                     info = self.iso_manager.get_iso_info(iso_name)
                     if info:
                         self.send_json_response(info)
                     else:
                         self.send_error(404, "ISO not found")
-                    return
+                elif path == '/api/devices':
+                    self.handle_devices()
+                elif path.startswith('/api/devices/'):
+                    mac = path.split('/')[-1]
+                    self.handle_device_info(mac)
                 else:
                     self.send_error(404, "API endpoint not found")
                 return
@@ -1313,7 +1314,7 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                 except:
                     pass
 
-            # 只有在确实检测到进程运行时才置状��为running
+            # 只有在确实检测到进程运行时才置状态为running
             if is_running:
                 status = 'running'
                 last_activity = time.strftime('%Y-%m-%d %H:%M:%S')
@@ -1404,6 +1405,52 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header(header, value)
         super().end_headers()
 
+    def send_error_json(self, code, message):
+        """发送JSON格式的错误响应"""
+        self.send_response(code)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps({
+            'success': False,
+            'error': message
+        }).encode())
+
+    def handle_device_delete(self, mac):
+        """删除设备"""
+        try:
+            # 将连字符替换回冒号，并转换为小写
+            mac = mac.replace('-', ':').lower()
+            dhcp_leases_file = 'dhcp_leases.json'
+            if not os.path.exists(dhcp_leases_file):
+                self.send_error_json(404, "Device not found")
+                return
+
+            with open(dhcp_leases_file, 'r+') as f:
+                leases = json.load(f)
+                if mac in leases:
+                    # 记录被删除设备的信息
+                    deleted_device = leases[mac]
+                    # 从租约中删除设备
+                    del leases[mac]
+                    # 如果设备有IP地址，将其返回到可用池中
+                    if 'ip' in deleted_device:
+                        logging.info(f"IP {deleted_device['ip']} returned to pool")
+                    # 重写文件
+                    f.seek(0)
+                    f.truncate()
+                    json.dump(leases, f, indent=2)
+
+                    self.send_json_response({
+                        'success': True,
+                        'message': f'Device {mac} deleted successfully'
+                    })
+                    logging.info(f"Device deleted: {mac}")
+                else:
+                    self.send_error_json(404, f"Device {mac} not found")
+        except Exception as e:
+            logging.error(f"Error deleting device {mac}: {e}")
+            self.send_error_json(500, f"Failed to delete device: {str(e)}")
+
     def do_DELETE(self):
         """处理DELETE请求"""
         try:
@@ -1459,10 +1506,54 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                     self.send_error(500, f"Failed to delete file: {str(e)}")
                 return
 
-            self.send_error(404, "API endpoint not found")
+            # 处理设备删除
+            elif path.startswith('/api/devices/'):
+                mac = path.split('/')[-1]
+                self.handle_device_delete(mac)
+                return
+
+            self.send_error_json(404, "API endpoint not found")
 
         except Exception as e:
             logging.error(f"Error handling DELETE request: {e}")
+            self.send_error_json(500, str(e))
+
+    def handle_devices(self):
+        """处理设备列表请求"""
+        try:
+            devices = []
+            dhcp_leases_file = 'dhcp_leases.json'
+
+            if os.path.exists(dhcp_leases_file):
+                try:
+                    with open(dhcp_leases_file, 'r') as f:
+                        leases = json.load(f)
+                        current_time = time.time()
+                        for mac, info in leases.items():
+                            # 计算在线状态（5分钟内有活动则认为在线）
+                            last_seen = info.get('last_seen', 0)
+                            online = (current_time - last_seen) < 300
+
+                            devices.append({
+                                'mac': mac,
+                                'ip': info.get('ip'),
+                                'hostname': info.get('hostname'),
+                                'bios_mode': info.get('bios_mode', 'Unknown'),
+                                'boot_file': info.get('boot_file'),
+                                'last_seen': last_seen,
+                                'online': online
+                            })
+                        logging.info(f"Found {len(devices)} devices in lease file")
+                except json.JSONDecodeError as e:
+                    logging.error(f"租约文件格式错误: {e}")
+                except Exception as e:
+                    logging.error(f"读取租约文件失败: {e}")
+            else:
+                logging.info("租约文件不存在")
+
+            self.send_json_response(devices)
+        except Exception as e:
+            logging.error(f"获取设备列表失败: {e}")
             self.send_error(500, str(e))
 
 

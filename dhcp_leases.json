@@ -1,0 +1,38 @@
+{
+  "18:65:71:fb:d5:7c": {
+    "ip": "192.168.1.102",
+    "hostname": "DESKTOP-EGA3OOU",
+    "bios_mode": "Legacy",
+    "boot_file": "",
+    "last_seen": 1734337284.7413294,
+    "first_seen": 1734335095.4115396,
+    "expire": 1734340884.7413294
+  },
+  "30:5f:77:72:8f:93": {
+    "ip": "192.168.1.104",
+    "hostname": null,
+    "bios_mode": "UEFI",
+    "boot_file": "",
+    "last_seen": 1734337358.493688,
+    "first_seen": 1734336350.5108154,
+    "expire": 1734340958.493688
+  },
+  "44:1a:fa:8e:a0:4f": {
+    "ip": "192.168.1.100",
+    "hostname": null,
+    "bios_mode": "UEFI",
+    "boot_file": "",
+    "last_seen": 1734337350.3213527,
+    "first_seen": 1734336854.3271148,
+    "expire": 1734340950.3213527
+  },
+  "22:17:c2:36:75:c6": {
+    "ip": "192.168.1.101",
+    "hostname": "BRQ-AN00",
+    "bios_mode": "Legacy",
+    "boot_file": "",
+    "last_seen": 1734336873.1224122,
+    "first_seen": 1734336873.1091282,
+    "expire": 1734340473.1224122
+  }
+}
