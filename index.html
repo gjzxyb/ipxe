@@ -548,6 +548,11 @@
             color: #c62828;
         }
 
+        .notification.info {
+            background-color: #e3f2fd;
+            color: #1976d2;
+        }
+
         .tab-content {
             display: none;
         }
@@ -768,6 +773,104 @@
         .custom-file-upload span {
             font-size: 1.1em;
         }
+
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 2rem;
+            border-radius: 1rem;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            max-width: 600px;
+            width: 90%;
+            position: relative;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: var(--text-color);
+            opacity: 0.5;
+            transition: var(--transition);
+            padding: 0.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+        }
+
+        .modal-close:hover {
+            opacity: 1;
+            background: rgba(0, 0, 0, 0.05);
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateY(-20px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .modal-content h3 {
+            margin: 0 0 1.5rem 0;
+            color: var(--primary-color);
+            font-size: 1.5rem;
+        }
+
+        .modal-content p {
+            margin: 1rem 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 1rem;
+            background: #f8fafc;
+            border-radius: 0.5rem;
+        }
+
+        .modal-content p strong {
+            color: var(--text-color);
+        }
+
+        .modal-content a {
+            color: var(--primary-color);
+            text-decoration: none;
+            transition: var(--transition);
+        }
+
+        .modal-content a:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -844,7 +947,7 @@
                 <div id="config-ipxe" class="tab-content active">
                     <div class="ipxe-settings">
                         <div class="setting-group">
-                            <label for="dhcp-mode">DHCP 服务器��式</label>
+                            <label for="dhcp-mode">DHCP 服务器模式</label>
                             <select id="dhcp-mode" class="config-select" onchange="saveIPXEConfig()">
                                 <option value="External">External</option>
                                 <option value="Internal">Internal</option>
@@ -912,7 +1015,7 @@
                                     <span>📝</span>编辑
                                 </button>
                                 <button class="btn btn-danger btn-sm" onclick="deleteDevice('00:1A:2B:3C:4D:5E')">
-                                    <span>🗑️</span>删除
+                                    <span>🗑���</span>删除
                                 </button>
                             </div>
                         </div>
@@ -925,7 +1028,7 @@
                             <div class="device-status offline">离线</div>
                             <div class="device-actions">
                                 <button class="btn btn-secondary btn-sm" onclick="editDevice('00:2C:4D:5E:6F:7G')">
-                                    <span>📝</span>编辑
+                                    <span>编辑</span>
                                 </button>
                                 <button class="btn btn-danger btn-sm" onclick="deleteDevice('00:2C:4D:5E:6F:7G')">
                                     <span>🗑️</span>删除
@@ -1019,7 +1122,7 @@
                 configs[type] = config;
                 const editorId = type === 'dhcp' ? 'config-editor' : 'http-config-editor';
                 document.getElementById(editorId).value = config;
-                showNotification(`${type.toUpperCase()}配置已重新加载`, 'success');
+                showNotification(`${type.toUpperCase()}配置已重���加载`, 'success');
             } catch (error) {
                 showNotification(`加载${type.toUpperCase()}配置失败`, 'error');
             }
@@ -1158,7 +1261,7 @@
                     ${isRunning ? '运行中' : '已停止'}
                 `;
 
-                // 更新按钮��态
+                // 更新按钮状态
                 document.getElementById('dhcp-start').disabled = isRunning;
                 document.getElementById('dhcp-stop').disabled = !isRunning;
                 document.getElementById('dhcp-restart').disabled = !isRunning;
@@ -1251,7 +1354,7 @@
                         }
                     }
                 } catch (error) {
-                    // 忽略错误，继续等待
+                    // ��略错误，继续等待
                 }
                 await new Promise(resolve => setTimeout(resolve, interval));
             }
@@ -1324,7 +1427,7 @@
                     showNotification('HTTP服务器停止成功', 'success');
                     return;
                 } else {
-                    // 启动或重启��作
+                    // 启动或重启操作
                     try {
                         const response = await fetch(`/api/http/${action}`, {
                             method: 'POST',
@@ -1424,10 +1527,28 @@
         function showNotification(message, type) {
             const notification = document.createElement('div');
             notification.className = `notification ${type}`;
+
+            // 根据类型选择不同的图标
+            let icon;
+            switch(type) {
+                case 'success':
+                    icon = '✅';
+                    break;
+                case 'error':
+                    icon = '❌';
+                    break;
+                case 'info':
+                    icon = 'ℹ️';
+                    break;
+                default:
+                    icon = '•';
+            }
+
             notification.innerHTML = `
-                <span>${type === 'success' ? '✅' : '❌'}</span>
+                <span>${icon}</span>
                 <span>${message}</span>
             `;
+
             document.body.appendChild(notification);
 
             setTimeout(() => {
@@ -1464,7 +1585,7 @@
                     if (consecutiveErrors >= maxConsecutiveErrors) {
                         clearInterval(statusCheckInterval);
                         statusCheckInterval = setInterval(checkStatus, 30000);  // 切换到30秒间隔
-                        console.log('检测到多次连接失败，已切换到低频率检查模式');
+                        console.log('检测到多次连失败，已切换到低频率检查模式');
                     }
                 }
             };
@@ -1565,7 +1686,7 @@
                     return;
                 }
 
-                // 添加镜像列表
+                // 添加镜像��表
                 for (const file of files) {
                     const fileName = decodeURIComponent(file.href.split('/').pop());
                     const mappingInfo = mapping[fileName];
@@ -1696,7 +1817,7 @@
         }
 
         function deleteDevice(mac) {
-            // TODO: 实��设备删除功能
+            // TODO: 实现设备删除功能
             if (confirm(`确定要删除设备 ${mac} 吗？`)) {
                 console.log('删除设备:', mac);
             }
@@ -1745,26 +1866,43 @@
             }
         }
 
-        // 添加查看ISO详情的函数
+        // 修改查看ISO详情的函数
         async function viewISODetails(fileName) {
             try {
                 const response = await fetch(`/api/iso/info/${fileName}`);
                 const info = await response.json();
 
-                // 显示详情对话框
-                const detailsHTML = `
-                    <div class="iso-details">
+                // 创建模态对话框
+                const modal = document.createElement('div');
+                modal.className = 'modal-overlay';
+                modal.innerHTML = `
+                    <div class="modal-content">
+                        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
                         <h3>ISO文件详情</h3>
-                        <p><strong>文件名:</strong> ${fileName}</p>
-                        <p><strong>ID:</strong> ${info.id}</p>
-                        <p><strong>本地路径:</strong> ${info.pxe_path}</p>
-                        <p><strong>访问地址:</strong> <a href="${info.url_path}" target="_blank">${info.url_path}</a></p>
-                        <p><strong>文件大小:</strong> ${formatSize(info.size)}</p>
+                        <p><strong>文件名</strong> <span>${fileName}</span></p>
+                        <p><strong>ID</strong> <span>${info.id}</span></p>
+                        <p><strong>本地路径</strong> <span>${info.pxe_path}</span></p>
+                        <p><strong>访问地址</strong> <a href="${info.url_path}" target="_blank">${info.url_path}</a></p>
+                        <p><strong>文件大小</strong> <span>${formatSize(info.size)}</span></p>
                     </div>
                 `;
 
-                // 使用你喜欢的对话框库显示详情，这里使用简单的alert作为示例
-                alert(detailsHTML.replace(/<[^>]+>/g, ''));
+                // 添加点击背景关闭模态框的功能
+                modal.addEventListener('click', (e) => {
+                    if (e.target === modal) {
+                        modal.remove();
+                    }
+                });
+
+                // 添加ESC键关闭模态框的功能
+                document.addEventListener('keydown', function closeOnEsc(e) {
+                    if (e.key === 'Escape') {
+                        modal.remove();
+                        document.removeEventListener('keydown', closeOnEsc);
+                    }
+                });
+
+                document.body.appendChild(modal);
             } catch (error) {
                 showNotification('获取ISO详情失败: ' + error.message, 'error');
             }
