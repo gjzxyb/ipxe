@@ -338,7 +338,7 @@ class SecureHTTPServer:
                         except:
                             pass
             else:  # Unix
-                # 使用lsof找��进程
+                # 使用lsof找到进程
                 try:
                     output = subprocess.check_output(['lsof', '-ti', f':{port}'], text=True)
                     for pid in output.splitlines():
@@ -765,6 +765,63 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                 elif path.startswith('/api/devices/'):
                     mac = path.split('/')[-1]
                     self.handle_device_info(mac)
+                elif path == '/api/bootfiles':
+                    self.handle_bootfiles()
+                elif path == '/api/config/ipxe':
+                    try:
+                        # 解析请求数据
+                        data = json.loads(post_data)
+
+                        if 'boot_filename' not in data:
+                            self.send_error(400, "Missing boot_filename parameter")
+                            return
+
+                        # 读取现有配置文件内容
+                        config_file = 'config.yaml'
+                        if os.path.exists(config_file):
+                            with open(config_file, 'r', encoding='utf-8') as f:
+                                content = f.read()
+                        else:
+                            content = ''
+
+                        # 获取当前服务器地址和端口
+                        server_address = self.headers.get('Host', 'localhost:8080')
+                        file_server_url = f"http://{server_address}/bootfile"
+
+                        # 如果文件为空或不存在，创建基本结构
+                        if not content.strip():
+                            content = f'file_server: "{file_server_url}"\nboot_filename: ""\n'
+
+                        # 使用正则表达式替换 file_server 和 boot_filename 的值
+                        new_content = content
+                        # 替换 file_server
+                        new_content = re.sub(
+                            r'file_server:\s*"[^"]*"',
+                            f'file_server: "{file_server_url}"',
+                            new_content
+                        )
+                        # 替换 boot_filename
+                        new_content = re.sub(
+                            r'boot_filename:\s*"[^"]*"',
+                            f'boot_filename: "{data["boot_filename"]}"',
+                            new_content
+                        )
+
+                        # 如果没有找到相应的配置项，添加到文件末尾
+                        if 'file_server:' not in content:
+                            new_content = f'file_server: "{file_server_url}"\n{new_content}'
+                        if 'boot_filename:' not in content:
+                            new_content += f'\nboot_filename: "{data["boot_filename"]}"\n'
+
+                        # 保存更新后的配置
+                        with open(config_file, 'w', encoding='utf-8') as f:
+                            f.write(new_content)
+
+                        self.send_json_response({'success': True})
+                    except Exception as e:
+                        logging.error(f"Error saving iPXE config: {e}")
+                        self.send_error(500, f"Failed to save config: {str(e)}")
+                    return
                 else:
                     self.send_error(404, "API endpoint not found")
                 return
@@ -842,7 +899,7 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                         self.send_error(413, "File too large")
                         return
 
-                    # 读取整个请求数据
+                    # 读取整个请求数
                     post_data = self.rfile.read(content_length)
 
                     # 查找文件名
@@ -853,7 +910,7 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 
                     filename = filename_match.group(1).decode('utf-8', errors='ignore')
 
-                    # 查找文件内容的开始和束位置
+                    # 查找文件内容的开始和束置
                     content_start = post_data.find(b'\r\n\r\n')
                     if content_start == -1:
                         self.send_error(400, "Invalid request format")
@@ -963,6 +1020,63 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                 with open('http_config.yaml', 'w', encoding='utf-8') as f:
                     f.write(post_data)
                 self.send_json_response({'success': True})
+                return
+
+            # 处理 iPXE 配置
+            elif path == '/api/config/ipxe':
+                try:
+                    # 解析请求数据
+                    data = json.loads(post_data)
+
+                    if 'boot_filename' not in data:
+                        self.send_error(400, "Missing boot_filename parameter")
+                        return
+
+                    # 读取现有配置文件内容
+                    config_file = 'config.yaml'
+                    if os.path.exists(config_file):
+                        with open(config_file, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                    else:
+                        content = ''
+
+                    # 获取当前服务器地址和端口
+                    server_address = self.headers.get('Host', 'localhost:8080')
+                    file_server_url = f"http://{server_address}/bootfile"
+
+                    # 如果文件为空或不存在，创建基本结构
+                    if not content.strip():
+                        content = f'file_server: "{file_server_url}"\nboot_filename: ""\n'
+
+                    # 使用正则表达式替换 file_server 和 boot_filename 的值
+                    new_content = content
+                    # 替换 file_server
+                    new_content = re.sub(
+                        r'file_server:\s*"[^"]*"',
+                        f'file_server: "{file_server_url}"',
+                        new_content
+                    )
+                    # 替换 boot_filename
+                    new_content = re.sub(
+                        r'boot_filename:\s*"[^"]*"',
+                        f'boot_filename: "{data["boot_filename"]}"',
+                        new_content
+                    )
+
+                    # 如果没有找到相应的配置项，添加到文件末尾
+                    if 'file_server:' not in content:
+                        new_content = f'file_server: "{file_server_url}"\n{new_content}'
+                    if 'boot_filename:' not in content:
+                        new_content += f'\nboot_filename: "{data["boot_filename"]}"\n'
+
+                    # 保存更新后的配置
+                    with open(config_file, 'w', encoding='utf-8') as f:
+                        f.write(new_content)
+
+                    self.send_json_response({'success': True})
+                except Exception as e:
+                    logging.error(f"Error saving iPXE config: {e}")
+                    self.send_error(500, f"Failed to save config: {str(e)}")
                 return
 
             self.send_error(404, "API endpoint not found")
@@ -1418,7 +1532,7 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     def handle_device_delete(self, mac):
         """删除设备"""
         try:
-            # 将连字符替换回冒号，并转换为小写
+            # 将连字符换回冒号，并转换为小写
             mac = mac.replace('-', ':').lower()
             dhcp_leases_file = 'dhcp_leases.json'
             if not os.path.exists(dhcp_leases_file):
@@ -1430,7 +1544,7 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                 if mac in leases:
                     # 记录被删除设备的信息
                     deleted_device = leases[mac]
-                    # 从租约中删除设备
+                    # 从约中删除设备
                     del leases[mac]
                     # 如果设备有IP地址，将其返回到可用池中
                     if 'ip' in deleted_device:
@@ -1506,7 +1620,7 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                     self.send_error(500, f"Failed to delete file: {str(e)}")
                 return
 
-            # 处理设备删除
+            # 处理设��删除
             elif path.startswith('/api/devices/'):
                 mac = path.split('/')[-1]
                 self.handle_device_delete(mac)
@@ -1554,6 +1668,24 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json_response(devices)
         except Exception as e:
             logging.error(f"获取设备列表失败: {e}")
+            self.send_error(500, str(e))
+
+    def handle_bootfiles(self):
+        """获取bootfile文件夹中的EFI文件列表"""
+        try:
+            bootfile_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bootfile')
+            if not os.path.exists(bootfile_dir):
+                self.send_json_response({'files': []})
+                return
+
+            # 获取所有.efi文件
+            files = [f for f in os.listdir(bootfile_dir)
+                    if os.path.isfile(os.path.join(bootfile_dir, f))
+                    and f.lower().endswith('.efi')]
+
+            self.send_json_response({'files': files})
+        except Exception as e:
+            logging.error(f"Error getting bootfiles: {e}")
             self.send_error(500, str(e))
 
 

@@ -24,18 +24,5 @@ options:
 
 pxe:
   enabled: true
-  tftp_server: "192.168.1.88"
-  boot_filename: "pxelinux.0"
-  architecture_specific:
-    # x86 BIOS
-    - arch: 0
-      boot_filename: "pxelinux.0"
-    # x86 EFI 32-bit
-    - arch: 6
-      boot_filename: "bootia32.efi"
-    # x86 EFI 64-bit
-    - arch: 7
-      boot_filename: "bootx64.efi"
-    # ARM 64-bit EFI
-    - arch: 9
-      boot_filename: "bootaa64.efi"
+  file_server: "http://127.0.0.1:8080/bootfile"
+  boot_filename: "snponly.efi"

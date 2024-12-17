@@ -947,37 +947,8 @@
                 <div id="config-ipxe" class="tab-content active">
                     <div class="ipxe-settings">
                         <div class="setting-group">
-                            <label for="dhcp-mode">DHCP 服务器模式</label>
-                            <select id="dhcp-mode" class="config-select" onchange="saveIPXEConfig()">
-                                <option value="External">External</option>
-                                <option value="Internal">Internal</option>
-                            </select>
-                        </div>
-
-                        <div class="setting-group">
-                            <label for="boot-mode">启动界面模式</label>
-                            <select id="boot-mode" class="config-select" onchange="saveIPXEConfig()">
-                                <option value="GUI">GUI</option>
-                                <option value="CLI">CLI</option>
-                            </select>
-                        </div>
-
-                        <div class="setting-group">
-                            <label for="boot-resolution">启动实时分辨率</label>
-                            <select id="boot-resolution" class="config-select" onchange="saveIPXEConfig()">
-                                <option value="1024x768">1024x768</option>
-                                <option value="800x600">800x600</option>
-                                <option value="1280x1024">1280x1024</option>
-                                <option value="1920x1080">1920x1080</option>
-                            </select>
-                        </div>
-
-                        <div class="setting-group">
                             <label for="efi-file">EFI 启动文件</label>
                             <select id="efi-file" class="config-select" onchange="saveIPXEConfig()">
-                                <option value="snponlyx64.efi">snponlyx64.efi</option>
-                                <option value="snponlyx86.efi">snponlyx86.efi</option>
-                                <option value="ipxe.efi">ipxe.efi</option>
                             </select>
                         </div>
                     </div>
@@ -1261,7 +1232,7 @@
                     ${isRunning ? '运行中' : '已停止'}
                 `;
 
-                // 更新按钮状态
+                // 更新按��状态
                 document.getElementById('dhcp-start').disabled = isRunning;
                 document.getElementById('dhcp-stop').disabled = !isRunning;
                 document.getElementById('dhcp-restart').disabled = !isRunning;
@@ -1485,7 +1456,7 @@
                     }
 
                     if (!serverUp) {
-                        throw new Error(`服务器${getActionName(action)}超���`);
+                        throw new Error(`服务器${getActionName(action)}超时`);
                     }
                 }
             } catch (error) {
@@ -1564,6 +1535,7 @@
             loadConfig('ipxe');
             loadConfig('dhcp');
             loadConfig('http');
+            loadIPXEConfig();
             updateDHCPStatus();
             updateHTTPStatus();
 
@@ -1715,7 +1687,7 @@
                                 </button>
                             ` : `
                                 <button class="btn btn-primary btn-sm" onclick="processISO('${fileName}')">
-                                    <span>��</span>处理
+                                    <span>处理</span>
                                 </button>
                             `}
                             <button class="btn btn-danger btn-sm" onclick="deleteImage('${fileName}')">
@@ -1855,15 +1827,38 @@
         // 添加新的iPXE配置相关函数
         async function loadIPXEConfig() {
             try {
+                // 加载bootfiles
+                const bootfilesResponse = await fetch('/api/bootfiles');
+                const bootfilesData = await bootfilesResponse.json();
+
+                // 更新select选项
+                const efiSelect = document.getElementById('efi-file');
+                if (bootfilesData.files.length > 0) {
+                    efiSelect.innerHTML = bootfilesData.files
+                        .map(file => `<option value="${file}">${file}</option>`)
+                        .join('');
+                } else {
+                    // 如果没有找到文件，显示默认选项
+                    efiSelect.innerHTML = `
+                        <option value="snponlyx64.efi">snponlyx64.efi</option>
+                        <option value="snponlyx86.efi">snponlyx86.efi</option>
+                        <option value="ipxe.efi">ipxe.efi</option>
+                    `;
+                }
+
+                // 加载当前配置
                 const response = await fetch('/api/config/ipxe');
                 const config = await response.json();
 
-                // 设置下拉值
-                document.getElementById('dhcp-mode').value = config.dhcp_mode || 'External';
-                document.getElementById('boot-mode').value = config.boot_mode || 'GUI';
-                document.getElementById('boot-resolution').value = config.boot_resolution || '1024x768';
-                document.getElementById('efi-file').value = config.efi_file || 'snponlyx64.efi';
+                // 如果配置中有boot_filename，设置对应的值
+                if (config.boot_filename && bootfilesData.files.includes(config.boot_filename)) {
+                    efiSelect.value = config.boot_filename;
+                } else if (bootfilesData.files.length > 0) {
+                    // 如果没有配置值，使用第一个文件作为默认值
+                    efiSelect.value = bootfilesData.files[0];
+                }
             } catch (error) {
+                console.error('加载iPXE配置失败:', error);
                 showNotification('加载iPXE配置失败', 'error');
             }
         }
@@ -1871,10 +1866,7 @@
         async function saveIPXEConfig() {
             try {
                 const config = {
-                    dhcp_mode: document.getElementById('dhcp-mode').value,
-                    boot_mode: document.getElementById('boot-mode').value,
-                    boot_resolution: document.getElementById('boot-resolution').value,
-                    efi_file: document.getElementById('efi-file').value
+                    boot_filename: document.getElementById('efi-file').value  // 使用boot_filename作为键
                 };
 
                 const response = await fetch('/api/config/ipxe', {
@@ -1891,6 +1883,7 @@
                     throw new Error('保存失败');
                 }
             } catch (error) {
+                console.error('保存iPXE配置失败:', error);
                 showNotification('保存iPXE配置失败', 'error');
             }
         }
