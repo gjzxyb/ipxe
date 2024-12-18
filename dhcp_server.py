@@ -17,11 +17,78 @@ import tempfile
 import ctypes
 import subprocess
 import json
+import locale
+import select
+import errno
+import select
+import errno
 
+# 确保日志目录存在
+log_dir = os.path.dirname('dhcp_server.log')
+if log_dir and not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+
+# 设置默认编码为UTF-8
+if sys.stdout.encoding != 'utf-8':
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
+    else:
+        import codecs
+        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer)
+
+if sys.stderr.encoding != 'utf-8':
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8')
+    else:
+        sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer)
+
+# 配置日志处理器
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('dhcp_server.log', encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
+    ]
 )
+
+# 修改日志记录函数
+def log_message(message, level=logging.INFO):
+    """记录日志消息"""
+    try:
+        # 确保消息是UTF-8编码
+        if isinstance(message, bytes):
+            message = message.decode('utf-8')
+        logging.log(level, message)
+    except Exception as e:
+        print(f"日志记录失败: {e}")
+
+# 在需要记录日志的地方使用
+def start_server():
+    """启动服务器"""
+    global server
+    try:
+        log_message("正在启动DHCP服务器...")
+        # ... 其他代码保持不变 ...
+    except Exception as e:
+        log_message(f"启动服务器失败: {str(e)}", logging.ERROR)
+        if os.path.exists(pid_file):
+            remove_pid()
+        return False
+
+def stop_server():
+    """停止服务器"""
+    try:
+        log_message("正在停止DHCP服务器...")
+        # ... 其他代码保持不变 ...
+    except Exception as e:
+        log_message(f"停止服务器失败: {str(e)}", logging.ERROR)
+        return False
+
+# 设置系统默认编码
+if locale.getpreferredencoding().upper() != 'UTF-8':
+    import os
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
 
 class DHCPPacket:
     def __init__(self):
@@ -122,7 +189,7 @@ class DHCPPacket:
         packed += bytes([255])
 
         # 如果包长度小于最小要求，添加填充
-        if len(packed) < 300:  # 使用更大的最小长度以确保包含足够的数据
+        if len(packed) < 300:  # 使用更大最小长度以确保包含足够的数据
             packed = packed[:-1] + b'\x00' * (300 - len(packed)) + bytes([255])
 
         return packed
@@ -197,134 +264,248 @@ class DHCPPacket:
         return packet
 
 class DHCPServer:
-    def __init__(self, config_file='config.yaml'):
-        self.load_config(config_file)
-        self.leases = {}
-        self.sock = None
-        self.proxy_sock = None
-        self.running = False
-        self.existing_dhcp_server = None
-        self.lease_cleanup_interval = 60  # 租约清理间隔（秒）
-        self.last_cleanup_time = 0
-        self.status_check_interval = 5  # 状态检查间隔（秒）
-        self.last_status_check = 0
-        self.status_thread = None
-        self._lock = threading.Lock()
-        self.leases_file = 'dhcp_leases.json'
-        self.load_leases()
-
-    def validate_config_ip(self, ip_str):
-        """Validate IP address in configuration"""
+    def __init__(self, config_file):
+        """初始化DHCP服务器"""
         try:
-            # 使用ipaddress模块验证IP地址
-            ipaddress.ip_address(ip_str)
-            return True
-        except ValueError:
-            return False
-
-    def load_config(self, config_file):
-        """Load configuration from YAML file"""
-        try:
+            # 加载配置文件
             with open(config_file, 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f)
-        except UnicodeDecodeError:
-            try:
-                with open(config_file, 'r', encoding='gbk') as f:
-                    config = yaml.safe_load(f)
-            except Exception as e:
-                logging.error(f"配置文件编码错误: {e}")
-                raise
-        except FileNotFoundError:
-            logging.error(f"找不到配置文件: {config_file}")
-            raise
-        except Exception as e:
-            logging.error(f"加载配置文件时错: {e}")
-            raise
+                self.config = yaml.safe_load(f)
 
-        # Load proxy mode configuration
-        self.proxy_mode = config.get('proxy_mode', {}).get('enabled', False)
-        self.detect_dhcp = config.get('proxy_mode', {}).get('detect_existing_dhcp', True)
-        self.proxy_timeout = config.get('proxy_mode', {}).get('proxy_timeout', 5)
-        if not self.detect_dhcp:
-            self.existing_dhcp_server = config.get('proxy_mode', {}).get('existing_dhcp_server')
-            if not self.validate_config_ip(self.existing_dhcp_server):
-                raise ValueError(f"Invalid existing DHCP server IP: {self.existing_dhcp_server}")
+            # 服务器配置
+            server_config = self.config.get('server', {})
+            self.interface = server_config.get('interface', '')
+            self.server_ip = server_config.get('server_ip', '0.0.0.0')
+            self.subnet_mask = server_config.get('subnet_mask', '255.255.255.0')
+            self.broadcast = server_config.get('broadcast_address', '255.255.255.255')
 
-        # Validate server configuration
-        for key in ['server_ip', 'subnet_mask']:
-            if not self.validate_config_ip(config['server'][key]):
-                raise ValueError(f"Invalid {key} in configuration: {config['server'][key]}")
+            # DHCP配置
+            dhcp_config = self.config.get('dhcp', {})
+            self.pool_start = dhcp_config.get('pool_start', '')
+            self.pool_end = dhcp_config.get('pool_end', '')
+            self.lease_time = dhcp_config.get('lease_time', 3600)
 
-        self.interface = config['server']['interface']
-        self.server_ip = config['server']['server_ip']
-        self.subnet_mask = config['server']['subnet_mask']
-        self.broadcast = config['server']['broadcast_address']
+            # 选项配置
+            options_config = self.config.get('options', {})
+            self.router = options_config.get('router', '')
+            self.dns_servers = options_config.get('dns_servers', [])
+            self.domain_name = options_config.get('domain_name', '')
 
-        # Validate DHCP pool
-        self.pool_start = config['dhcp']['pool_start']
-        self.pool_end = config['dhcp']['pool_end']
-
-        # 移除可能存在的CIDR前缀
-        if '/' in self.pool_start:
-            self.pool_start = self.pool_start.split('/')[0]
-        if '/' in self.pool_end:
-            self.pool_end = self.pool_end.split('/')[0]
-
-        if not all(self.validate_config_ip(ip) for ip in [self.pool_start, self.pool_end]):
-            raise ValueError("Invalid IP address in DHCP pool configuration")
-
-        self.lease_time = config['dhcp']['lease_time']
-
-        # Validate router and DNS servers
-        if not self.validate_config_ip(config['options']['router']):
-            raise ValueError(f"Invalid router IP: {config['options']['router']}")
-
-        for dns in config['options']['dns_servers']:
-            if not self.validate_config_ip(dns):
-                raise ValueError(f"Invalid DNS server IP: {dns}")
-
-        self.router = config['options']['router']
-        self.dns_servers = config['options']['dns_servers']
-        self.domain_name = config['options']['domain_name']
-
-        # Load and validate PXE configuration
-        self.pxe_enabled = config.get('pxe', {}).get('enabled', False)
-        if self.pxe_enabled:
-            pxe_config = config['pxe']
+            # PXE配置
+            pxe_config = self.config.get('pxe', {})
+            self.pxe_enabled = pxe_config.get('enabled', False)
             self.tftp_server = pxe_config.get('tftp_server', self.server_ip)
-            if not self.validate_config_ip(self.tftp_server):
-                raise ValueError(f"Invalid TFTP server IP: {self.tftp_server}")
+            self.default_boot_filename = pxe_config.get('default_boot_filename', '')
+            self.arch_specific_boot = {}
+            for arch_config in pxe_config.get('architecture_specific', []):
+                self.arch_specific_boot[str(arch_config.get('arch'))] = arch_config.get('boot_filename')
 
-            self.default_boot_filename = pxe_config.get('boot_filename', 'pxelinux.0')
-            self.arch_specific_boot = {
-                str(arch_conf['arch']): arch_conf['boot_filename']
-                for arch_conf in pxe_config.get('architecture_specific', [])
+            # 代理模式配置
+            proxy_config = self.config.get('proxy_mode', {})
+            self.proxy_mode = proxy_config.get('enabled', False)
+            self.detect_dhcp = proxy_config.get('detect_existing_dhcp', False)
+            self.existing_dhcp_server = proxy_config.get('existing_dhcp_server', '')
+            self.proxy_timeout = proxy_config.get('proxy_timeout', 5)
+
+            # 初始化可用IP地址池
+            self.available_ips = []
+            if self.pool_start and self.pool_end:
+                try:
+                    start_ip = ipaddress.IPv4Address(self.pool_start)
+                    end_ip = ipaddress.IPv4Address(self.pool_end)
+                    # 直接存储字符串格式的IP地址
+                    self.available_ips = [str(ipaddress.IPv4Address(ip))
+                                        for ip in range(int(start_ip), int(end_ip) + 1)]
+                except Exception as e:
+                    log_message(f"初始化IP地址池失败: {str(e)}", logging.ERROR)
+
+            # 初始化其他变量
+            self.leases = {}
+            self.leases_file = 'dhcp_leases.json'
+            self.running = False
+            self.sock = None
+            self.proxy_sock = None
+            self._lock = threading.Lock()
+            self.status_thread = None
+            self.status_check_interval = 60
+
+            # 加载现有租约
+            self.load_leases()
+
+            # 添加 ProxyDHCP 支持
+            self.proxy_port = 4011
+
+            log_message("DHCP服务器配置已加载")
+            log_message(f"服务器IP: {self.server_ip}")
+            log_message(f"子网掩码: {self.subnet_mask}")
+            log_message(f"广播地址: {self.broadcast}")
+            log_message(f"IP地址池: {self.pool_start} - {self.pool_end}")
+            log_message(f"PXE启用状态: {'是' if self.pxe_enabled else '否'}")
+
+        except Exception as e:
+            log_message(f"初始化DHCP服务器失败: {str(e)}", logging.ERROR)
+            raise
+
+    def start(self):
+        """启动DHCP服务器"""
+        try:
+            # 创建主DHCP套接字
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            self.sock.bind(('0.0.0.0', 67))
+            log_message(f"DHCP服务器已启动，监听端口 67")
+
+            # 设置为阻塞模式
+            self.sock.setblocking(True)
+
+            # 启动服务器
+            self.running = True
+
+            # 启动状态检查线程
+            self.status_check_thread = threading.Thread(target=self.check_client_status)
+            self.status_check_thread.daemon = True
+            self.status_check_thread.start()
+
+            # 开始监听
+            while self.running:
+                try:
+                    # 使用select监听套接字
+                    readable, _, _ = select.select([self.sock], [], [], 1.0)
+                    if not readable:
+                        continue
+
+                    data, addr = self.sock.recvfrom(4096)
+                    # 创建新线程处理请求
+                    threading.Thread(target=self.handle_dhcp_packet, args=(data, addr)).start()
+
+                except select.error as e:
+                    if e.args[0] != errno.EINTR:
+                        log_message(f"套接字选择错误: {str(e)}", logging.ERROR)
+                except socket.error as e:
+                    if e.errno != errno.EAGAIN and e.errno != errno.EWOULDBLOCK:
+                        log_message(f"套接字错误: {str(e)}", logging.ERROR)
+                except Exception as e:
+                    log_message(f"处理DHCP请求时出错: {str(e)}", logging.ERROR)
+
+        except Exception as e:
+            log_message(f"启动服务器失败: {str(e)}", logging.ERROR)
+            raise
+        finally:
+            if hasattr(self, 'sock'):
+                self.sock.close()
+            self.running = False
+            log_message("DHCP服务器已停止")
+
+    def load_leases(self):
+        """加载租约信息"""
+        self.leases = {}
+        try:
+            if os.path.exists(self.leases_file):
+                with open(self.leases_file, 'r', encoding='utf-8') as f:
+                    self.leases = json.load(f)
+                log_message(f"已加载 {len(self.leases)} 个租约")
+            else:
+                log_message("未找到租约文件，创建新的租约记录")
+        except Exception as e:
+            log_message(f"加载租约文件失败: {e}", logging.ERROR)
+
+    def update_lease(self, client_mac, ip, packet):
+        """更新租约信息"""
+        try:
+            current_time = time.time()
+            mac = client_mac.lower()  # 统一使用小写MAC地址
+
+            # 如果IP在可用池中，移除它
+            if ip in self.available_ips:
+                self.available_ips.remove(ip)
+
+            # 获取BIOS模式
+            bios_mode = 'UEFI' if self.is_uefi_client(packet) else 'Legacy'
+
+            # 获取主机名
+            hostname = ''
+            if 12 in packet.options:  # Option 12 是主机名
+                try:
+                    hostname = packet.options[12].decode('utf-8', errors='ignore')
+                except:
+                    pass
+
+            # 获取引导文件名
+            boot_file = ''
+            if 67 in packet.options:
+                try:
+                    boot_file = packet.options[67].decode('ascii', errors='ignore')
+                except:
+                    pass
+            elif hasattr(packet, 'file') and packet.file:
+                try:
+                    boot_file = packet.file.decode('ascii', errors='ignore').rstrip('\x00')
+                except:
+                    pass
+
+            # 更新租约信息
+            lease_info = {
+                'ip': ip,
+                'hostname': hostname,
+                'bios_mode': bios_mode,
+                'boot_file': boot_file,
+                'last_seen': current_time,
+                'first_seen': self.leases.get(mac, {}).get('first_seen', current_time),
+                'expire': current_time + self.lease_time,
+                'status': '在线'  # 设置初始状态为在线
             }
 
-        # Create IP pool with proper handling of IP ranges
+            # 更新租约
+            self.leases[mac] = lease_info
+
+            # 立即保存到文件
+            self.save_leases()
+            log_message(f"租约已更新: {mac} -> {ip} ({bios_mode})")
+
+            return lease_info
+        except Exception as e:
+            log_message(f"更新租约失败: {e}", logging.ERROR)
+            return None
+
+    def save_leases(self):
+        """保存租约信息到文件"""
         try:
-            start_ip = ipaddress.IPv4Address(self.pool_start)
-            end_ip = ipaddress.IPv4Address(self.pool_end)
+            # 确保目录存在
+            lease_dir = os.path.dirname(self.leases_file)
+            if lease_dir and not os.path.exists(lease_dir):
+                os.makedirs(lease_dir)
 
-            # Generate list of individual IP addresses
-            self.available_ips = []
-            current_ip = start_ip
-            while current_ip <= end_ip:
-                self.available_ips.append(str(current_ip))
-                current_ip += 1
+            # 清理过期租约
+            current_time = time.time()
+            active_leases = {}
+            for mac, lease in self.leases.items():
+                if lease['expire'] > current_time:
+                    active_leases[mac] = lease
 
-            logging.info(f"Created IP pool with {len(self.available_ips)} addresses")
+            # 保存租约信息
+            with open(self.leases_file, 'w', encoding='utf-8') as f:
+                json.dump(active_leases, f, indent=2, ensure_ascii=False)
+            log_message(f"已保存 {len(active_leases)} 个活动租约")
+        except Exception as e:
+            log_message(f"保存租约文件失败: {e}", logging.ERROR)
 
-        except ValueError as e:
-            raise ValueError(f"Error creating IP pool: {e}")
+    def cleanup_expired_leases(self):
+        """清理过期租约"""
+        try:
+            current_time = time.time()
+            for mac, lease in self.leases.items():
+                # 更新状态
+                if lease['expire'] < current_time:
+                    lease['status'] = '离线'
+                elif current_time - lease['last_seen'] > 300:  # 5分钟没有响应
+                    lease['status'] = '离线'
+                else:
+                    lease['status'] = '在线'
 
-        # 加载iPXE配置
-        if self.pxe_enabled:
-            pxe_config = config['pxe']
-            self.ipxe_enabled = pxe_config.get('ipxe', {}).get('enabled', False)
-            if self.ipxe_enabled:
-                self.ipxe_http_server = pxe_config['ipxe']['http_server']
-                self.ipxe_boot_script = pxe_config['ipxe']['boot_script']
+            # 保存更新后的状态
+            self.save_leases()
+        except Exception as e:
+            log_message(f"清理过期租约失败: {e}", logging.ERROR)
 
     def get_boot_filename(self, client_arch, is_ipxe=False):
         """Get appropriate boot filename based on client architecture"""
@@ -334,20 +515,20 @@ class DHCPServer:
         try:
             # 转换客户端架构为整数
             arch = int.from_bytes(client_arch, byteorder='big') if isinstance(client_arch, bytes) else client_arch
+            logging.info(f"Getting boot filename for architecture: {arch}")
 
-            # 如果是iPXE请求，返回iPXE脚本URL
-            if is_ipxe and self.ipxe_enabled:
-                return f"{self.ipxe_http_server}/{self.ipxe_boot_script}"
-
-            # 否则返回相应的iPXE引导文件
+            # 根据架构选择合适的引导文件
             if arch in [0x0000, 0x0006]:  # BIOS/x86
-                return self.arch_specific_boot.get('0', 'undionly.kpxe')
+                boot_file = self.arch_specific_boot.get('0', 'snponly.efi')
             elif arch in [0x0007]:  # UEFI x64
-                return self.arch_specific_boot.get('7', 'ipxe.efi')
+                boot_file = self.arch_specific_boot.get('7', 'ipxe.efi')
             elif arch in [0x0009]:  # UEFI x86
-                return self.arch_specific_boot.get('9', 'ipxe-ia32.efi')
+                boot_file = self.arch_specific_boot.get('9', 'ipxe-ia32.efi')
             else:
-                return self.default_boot_filename
+                boot_file = self.default_boot_filename
+
+            logging.info(f"Selected boot file: {boot_file}")
+            return boot_file
 
         except Exception as e:
             logging.error(f"Error determining boot filename: {e}")
@@ -361,35 +542,28 @@ class DHCPServer:
         return addrs[netifaces.AF_INET][0]
 
     def allocate_ip(self, client_mac):
-        """Allocate an IP address for a client"""
-        if client_mac in self.leases:
-            lease = self.leases[client_mac]
-            # Check if lease is still valid
-            if lease['expire'] > datetime.now().timestamp():
-                return lease['ip']
-            else:
-                # Lease expired, remove it
-                del self.leases[client_mac]
-                # Add the IP back to available pool if it's in our range
-                if lease['ip'] not in self.available_ips:
-                    try:
-                        ip = ipaddress.IPv4Address(lease['ip'])
-                        start_ip = ipaddress.IPv4Address(self.pool_start)
-                        end_ip = ipaddress.IPv4Address(self.pool_end)
-                        if start_ip <= ip <= end_ip:
-                            self.available_ips.append(lease['ip'])
-                    except ValueError:
-                        pass
+        """分配IP地址"""
+        try:
+            # 如果客户端已有租约且未过期，返回相同的IP
+            if client_mac in self.leases:
+                lease = self.leases[client_mac]
+                if lease['expire'] > time.time():
+                    return lease['ip']
 
-        if not self.available_ips:
+            # 从可用IP池中分配新IP
+            if self.available_ips:
+                # 确保返回的是字符串格式的IP地址
+                ip = self.available_ips.pop(0)
+                if isinstance(ip, int):
+                    # 如果是整数格式，转换为字符串格式
+                    ip_obj = ipaddress.IPv4Address(ip)
+                    return str(ip_obj)
+                return ip
+
             return None
-
-        ip = self.available_ips.pop(0)
-        self.leases[client_mac] = {
-            'ip': ip,
-            'expire': datetime.now().timestamp() + self.lease_time
-        }
-        return ip
+        except Exception as e:
+            log_message(f"分配IP地址失败: {str(e)}", logging.ERROR)
+            return None
 
     def handle_discover(self, packet):
         """Handle DHCP DISCOVER message"""
@@ -397,8 +571,13 @@ class DHCPServer:
         allocated_ip = self.allocate_ip(client_mac)
 
         if not allocated_ip:
-            logging.warning(f"No available IP addresses for client {client_mac}")
+            log_message(f"No available IP addresses for client {client_mac}")
             return None
+
+        # 检查是否是PXE请求
+        is_pxe = self.is_pxe_request(packet)
+        if is_pxe:
+            log_message(f"Received PXE DISCOVER from {client_mac}")
 
         response = DHCPPacket()
         response.op = 2  # BOOTREPLY
@@ -406,56 +585,60 @@ class DHCPServer:
         response.hlen = packet.hlen
         response.xid = packet.xid
         response.secs = 0
-        response.flags = packet.flags
-        response.yiaddr = allocated_ip
-        response.siaddr = self.server_ip
+        response.flags = 0x8000  # 强制使用广播
+        response.yiaddr = allocated_ip  # 分配的IP地址
+        response.siaddr = self.server_ip  # 使用DHCP服务器IP
         response.giaddr = packet.giaddr
         response.chaddr = packet.chaddr
+        response.sname = self.server_ip.encode('ascii') + b'\x00' * (64 - len(self.server_ip))
+        response.file = b'\x00' * 128
 
         # 基本DHCP选项
         options = {
             53: bytes([2]),  # DHCP Offer
-            1: self.subnet_mask,  # Subnet Mask
-            3: self.router,  # Router
-            6: self.dns_servers,  # DNS Servers
+            1: socket.inet_aton(self.subnet_mask),  # Subnet Mask
+            3: socket.inet_aton(self.router),  # Router
             51: struct.pack('!L', self.lease_time),  # Lease Time
-            54: self.server_ip,  # DHCP Server Identifier
-            28: self.broadcast  # Broadcast Address
+            54: socket.inet_aton(self.server_ip),  # DHCP Server Identifier
+            28: socket.inet_aton(self.broadcast),  # Broadcast Address
         }
 
-        # 修改PXE相关选项的处理
-        if self.pxe_enabled and self.is_pxe_request(packet):
-            client_arch = None
-            if 93 in packet.options:  # Client System Architecture
-                client_arch = packet.options[93]
-                logging.info(f"Client architecture: {int.from_bytes(client_arch, byteorder='big')}")
+        # 添加DNS服务器
+        if self.dns_servers:
+            dns_bytes = b''.join(socket.inet_aton(ip) for ip in self.dns_servers)
+            options[6] = dns_bytes
 
-            # 检查是否是iPXE客户端
-            is_ipxe = self.is_ipxe_client(packet)
-            boot_file = self.get_boot_filename(client_arch, is_ipxe)
+        # 处理PXE请求
+        if self.pxe_enabled and is_pxe:
+            client_arch = packet.options.get(93, b'\x00\x00')
+            arch_code = int.from_bytes(client_arch, byteorder='big')
+            log_message(f"PXE client architecture: {arch_code}")
 
-            if boot_file:
-                if is_ipxe and self.ipxe_enabled:
-                    # 对于iPXE客户端，使用HTTP URL
-                    response.file = b'\x00' * 128  # 清空文件名字段
-                    options.update({
-                        67: boot_file.encode('ascii'),  # 使用HTTP URL作为引导文件
-                    })
-                    logging.info(f"iPXE boot configuration: Script URL={boot_file}")
-                else:
-                    # 对于初始PXE客户端，使用TFTP
-                    response.siaddr = self.tftp_server
-                    response.file = boot_file.encode('ascii') + b'\x00' * (128 - len(boot_file))
-                    options.update({
-                        66: self.tftp_server,  # TFTP server name
-                        67: boot_file.encode('ascii'),  # Bootfile name
-                        60: b'PXEClient',  # Class identifier
-                        97: packet.options.get(97, b''),  # Client UUID if present
-                        43: b'\x06\x01\x00\x10\x94\x00'  # PXE vendor-specific information
-                    })
-                    logging.info(f"PXE boot configuration: TFTP={self.tftp_server}, File={boot_file}")
+            # 根据客户端架构选择合适的引导文件
+            if arch_code == 0:  # BIOS
+                boot_file = "pxelinux.0"
+            elif arch_code == 7:  # UEFI x64
+                boot_file = "snponly.efi"
+            elif arch_code == 9:  # UEFI x86
+                boot_file = "ipxe-ia32.efi"
+            else:
+                boot_file = self.default_boot_filename
+
+            # 设置引导文件
+            response.file = boot_file.encode('ascii') + b'\x00' * (128 - len(boot_file))
+
+            # 添加PXE必需的选项
+            options.update({
+                60: b'PXEClient',  # Vendor class identifier
+                66: self.server_ip.encode('ascii'),  # TFTP server name (使用DHCP服务器IP)
+                67: boot_file.encode('ascii'),  # Bootfile name
+                43: b'\x06\x01\x00\x10\x94\x00'  # PXE vendor options
+            })
+
+            log_message(f"PXE boot configuration: TFTP={self.server_ip}, File={boot_file}")
 
         response.options = options
+        log_message(f"Sending DHCP OFFER to {client_mac} with IP {allocated_ip}")
         return response
 
     def handle_request(self, packet):
@@ -463,25 +646,16 @@ class DHCPServer:
         client_mac = ':'.join(f'{b:02x}' for b in packet.chaddr[:6])
         requested_ip = None
 
-        # 获取客户端请求的IP地址
-        if 50 in packet.options:  # Option 50: Requested IP Address
-            try:
-                requested_ip = socket.inet_ntoa(packet.options[50])
-            except:
-                pass
+        # 获取请求的IP地址
+        if 50 in packet.options:  # Requested IP Address
+            requested_ip = socket.inet_ntoa(packet.options[50])
         elif packet.ciaddr != '0.0.0.0':
             requested_ip = packet.ciaddr
 
-        # 获取客户端信息
-        hostname = None
-        if 12 in packet.options:  # Hostname option
-            try:
-                hostname = packet.options[12].decode('utf-8')
-            except:
-                pass
-
-        # 检测BIOS模式
-        bios_mode = 'UEFI' if self.is_uefi_client(packet) else 'Legacy'
+        # 检查是否是PXE请求
+        is_pxe = self.is_pxe_request(packet)
+        if is_pxe:
+            log_message(f"Received PXE REQUEST from {client_mac}")
 
         response = DHCPPacket()
         response.op = 2  # BOOTREPLY
@@ -489,81 +663,73 @@ class DHCPServer:
         response.hlen = packet.hlen
         response.xid = packet.xid
         response.secs = 0
-        response.flags = packet.flags
+        response.flags = 0x8000  # 强制使用广播
         response.giaddr = packet.giaddr
         response.chaddr = packet.chaddr
+        response.sname = self.server_ip.encode('ascii') + b'\x00' * (64 - len(self.server_ip))
+        response.file = b'\x00' * 128
 
         # 验证请求的IP地址
-        valid_request = False
         if requested_ip:
-            # 检查是否是我们分配的IP
-            if client_mac in self.leases and self.leases[client_mac]['ip'] == requested_ip:
-                valid_request = True
-            # 或者是否在我们的IP池中
-            elif requested_ip in self.available_ips:
-                valid_request = True
-                if requested_ip in self.available_ips:
-                    self.available_ips.remove(requested_ip)
-
-        if valid_request:
             response.yiaddr = requested_ip
             response.siaddr = self.server_ip
 
             # 基本DHCP选项
             options = {
                 53: bytes([5]),  # DHCP ACK
-                1: self.subnet_mask,
-                3: self.router,
-                6: self.dns_servers,
+                1: socket.inet_aton(self.subnet_mask),
+                3: socket.inet_aton(self.router),
                 51: struct.pack('!L', self.lease_time),
-                54: self.server_ip,
-                28: self.broadcast
+                54: socket.inet_aton(self.server_ip),
+                28: socket.inet_aton(self.broadcast)
             }
 
-            # 修改PXE相关选项的处理
-            if self.pxe_enabled and self.is_pxe_request(packet):
-                client_arch = None
-                if 93 in packet.options:
-                    client_arch = packet.options[93]
-                    logging.info(f"Client architecture: {int.from_bytes(client_arch, byteorder='big')}")
+            # 添加DNS服务器
+            if self.dns_servers:
+                dns_bytes = b''.join(socket.inet_aton(ip) for ip in self.dns_servers)
+                options[6] = dns_bytes
 
-                boot_file = self.get_boot_filename(client_arch)
-                if boot_file:
-                    # 设置引导服务器IP为TFTP服务器IP
-                    response.siaddr = self.tftp_server
-                    # 设置引导文件名
-                    response.file = boot_file.encode('ascii') + b'\x00' * (128 - len(boot_file))
+            # 处理PXE请求
+            if self.pxe_enabled and is_pxe:
+                client_arch = packet.options.get(93, b'\x00\x00')
+                arch_code = int.from_bytes(client_arch, byteorder='big')
 
-                    options.update({
-                        66: self.tftp_server,  # TFTP server name
-                        67: boot_file.encode('ascii'),  # Bootfile name
-                        60: b'PXEClient',  # Class identifier
-                        97: packet.options.get(97, b''),  # Client UUID if present
-                        # 添加更多PXE相关选项
-                        43: b'\x06\x01\x00\x10\x94\x00'  # PXE vendor-specific information
-                    })
-                    logging.info(f"PXE boot configuration: TFTP={self.tftp_server}, File={boot_file}")
+                # 根据客户端架构选择合适的引导文件
+                if arch_code == 0:  # BIOS
+                    boot_file = "pxelinux.0"
+                elif arch_code == 7:  # UEFI x64
+                    boot_file = "snponly.efi"
+                elif arch_code == 9:  # UEFI x86
+                    boot_file = "ipxe-ia32.efi"
+                else:
+                    boot_file = self.default_boot_filename
+
+                # 设置引导文件
+                response.file = boot_file.encode('ascii') + b'\x00' * (128 - len(boot_file))
+
+                # 添加PXE必需的选项
+                options.update({
+                    60: b'PXEClient',  # Vendor class identifier
+                    66: self.server_ip.encode('ascii'),  # TFTP server name
+                    67: boot_file.encode('ascii'),  # Bootfile name
+                    43: b'\x06\x01\x00\x10\x94\x00'  # PXE vendor options
+                })
+
+                log_message(f"PXE boot configuration: TFTP={self.server_ip}, File={boot_file}")
 
             response.options = options
 
             # 更新租约信息
-            self.update_lease(
-                mac=client_mac,
-                ip=requested_ip,
-                hostname=hostname,
-                bios_mode=bios_mode,
-                boot_file=boot_file
-            )
-
-            logging.info(f"Assigned IP {requested_ip} to client {client_mac}")
+            self.update_lease(client_mac, requested_ip, packet)
+            log_message(f"Sent DHCP ACK to {client_mac} for IP {requested_ip}")
             return response
         else:
-            # 如果请求无效，发送 DHCP NAK
+            # 发送NAK
             response.options = {
                 53: bytes([6]),  # DHCP NAK
-                54: self.server_ip  # Server Identifier
+                54: socket.inet_aton(self.server_ip)
             }
-            logging.warning(f"Invalid IP request from {client_mac}, sending NAK")
+            log_message(f"Sent DHCP NAK to {client_mac} - No IP requested")
             return response
 
     def detect_existing_dhcp_server(self):
@@ -596,7 +762,7 @@ class DHCPServer:
             mac = [random.randint(0, 255) for _ in range(6)]
             discover.chaddr = bytes(mac) + b'\x00' * 10
 
-            # 设置基本选项
+            # 设置基本项
             discover.options = {
                 53: bytes([1]),     # DHCP Discover
                 55: bytes([1, 3, 6, 15, 51, 54]),  # 参数请求列表
@@ -620,7 +786,7 @@ class DHCPServer:
                         logging.debug("Received packet too short, ignoring")
                         continue
 
-                    if addr[0] != self.server_ip:  # 忽略自己的响应
+                    if addr[0] != self.server_ip:  # 忽自己的响应
                         packet = DHCPPacket.unpack(data)
                         if 53 in packet.options and packet.options[53][0] == 2:  # DHCP Offer
                             self.existing_dhcp_server = addr[0]
@@ -640,10 +806,29 @@ class DHCPServer:
             detect_sock.close()
 
     def is_pxe_request(self, packet):
-        """Check if the packet is a PXE boot request"""
-        return (93 in packet.options or  # Client System Architecture
-                60 in packet.options or  # Class Identifier (PXEClient)
-                97 in packet.options)    # UUID/GUID-based Client Identifier
+        """检查是否是PXE启动请求"""
+        try:
+            # 检查 Option 60 (Vendor Class Identifier)
+            if 60 in packet.options:
+                vendor_class = packet.options[60].decode('ascii', errors='ignore').lower()
+                if 'pxe' in vendor_class:
+                    logging.info(f"Detected PXE client by vendor class: {vendor_class}")
+                    return True
+
+            # 检查 Option 93 (Client System Architecture)
+            if 93 in packet.options:
+                logging.info("Detected PXE client by architecture option")
+                return True
+
+            # 检查 Option 94 (Client Network Interface Identifier)
+            if 94 in packet.options:
+                logging.info("Detected PXE client by network interface identifier")
+                return True
+
+            return False
+        except Exception as e:
+            logging.error(f"检查PXE请求时出错: {e}")
+            return False
 
     def forward_packet(self, packet, addr):
         """Forward DHCP packet to existing DHCP server"""
@@ -697,98 +882,158 @@ class DHCPServer:
             logging.error(f"Error forwarding DHCP packet: {e}")
             return None
 
-    def cleanup_expired_leases(self):
-        """清理过期的租约"""
-        current_time = time.time()
-        if current_time - self.last_cleanup_time < self.lease_cleanup_interval:
-            return
-
-        expired_leases = []
-        for mac, lease in self.leases.items():
-            if lease['expire'] < current_time:
-                expired_leases.append(mac)
-                if lease['ip'] not in self.available_ips:
-                    self.available_ips.append(lease['ip'])
-                    logging.info(f"Lease expired for {mac}, IP {lease['ip']} returned to pool")
-
-        for mac in expired_leases:
-            del self.leases[mac]
-
-        self.last_cleanup_time = current_time
-
     def handle_dhcp_packet(self, data, addr):
         """处理DHCP数据包"""
         try:
-            # 清理过期租约
-            self.cleanup_expired_leases()
-
             packet = DHCPPacket.unpack(data)
             msg_type = packet.options[53][0]
             client_mac = ':'.join(f'{b:02x}' for b in packet.chaddr[:6])
 
-            # 获取客户端信息
-            hostname = None
-            if 12 in packet.options:  # Hostname option
-                try:
-                    hostname = packet.options[12].decode('utf-8')
-                except:
-                    pass
-
-            # 检测BIOS模式
-            bios_mode = 'UEFI' if self.is_uefi_client(packet) else 'Legacy'
-
-            # 获取启动文件名
-            boot_file = None
-            if 67 in packet.options:  # Bootfile name option
-                try:
-                    boot_file = packet.options[67].decode('utf-8')
-                except:
-                    pass
-            elif hasattr(packet, 'file') and packet.file:
-                try:
-                    boot_file = packet.file.decode('utf-8').strip('\x00')
-                except:
-                    pass
+            # 更新客户端最后活动时间和状态
+            if client_mac in self.leases:
+                self.leases[client_mac].update({
+                    'last_seen': time.time(),
+                    'status': '在线'
+                })
+                self.save_leases()
 
             # 处理不同类型的DHCP消息
             response = None
             if msg_type == 1:  # DISCOVER
                 response = self.handle_discover(packet)
-                if response:
-                    # 更新租约信息
-                    self.update_lease(
-                        mac=client_mac,
-                        ip=response.yiaddr,
-                        hostname=hostname,
-                        bios_mode=bios_mode,
-                        boot_file=boot_file
-                    )
-                    logging.info(f"DISCOVER: Updated lease for {client_mac} -> {response.yiaddr}")
             elif msg_type == 3:  # REQUEST
                 response = self.handle_request(packet)
-                if response and response.options.get(53, [0])[0] == 5:  # DHCP ACK
-                    # 更新租约信息
-                    self.update_lease(
-                        mac=client_mac,
-                        ip=response.yiaddr,
-                        hostname=hostname,
-                        bios_mode=bios_mode,
-                        boot_file=boot_file
-                    )
-                    logging.info(f"REQUEST: Updated lease for {client_mac} -> {response.yiaddr}")
 
             # 发送响应
             if response:
                 try:
                     response_data = response.pack()
                     if len(response_data) >= 240:
-                        self.sock.sendto(response_data, ('255.255.255.255', 68))
-                        logging.info(f"Sent DHCP response to {client_mac}")
+                        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as send_sock:
+                            send_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                            send_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                            try:
+                                send_sock.bind((self.server_ip, 0))
+                            except:
+                                send_sock.bind(('0.0.0.0', 0))
+                            send_sock.sendto(response_data, ('255.255.255.255', 68))
+
+                            # 更新租约状态
+                            if msg_type == 3 and response.options[53][0] == 5:  # REQUEST + ACK
+                                self.update_lease_status(client_mac, '在线')
+
+                            if msg_type == 1:
+                                log_message(f"已发送DHCP OFFER响应到客户端 {client_mac} (广播方式)")
+                            else:
+                                msg_type = 'ACK' if response.options[53][0] == 5 else 'NAK'
+                                log_message(f"已发送DHCP {msg_type}响应到客户端 {client_mac} (广播方式)")
+
                 except Exception as e:
-                    logging.error(f"Error sending DHCP response: {e}")
+                    log_message(f"发送DHCP响应失败: {str(e)}", logging.ERROR)
 
         except Exception as e:
-            logging.error(f"Error processing DHCP packet: {e}")
+            log_message(f"处理DHCP数据包时出错: {str(e)}", logging.ERROR)
+
+    def update_lease_status(self, client_mac, status):
+        """更新租约状态"""
+        try:
+            if client_mac in self.leases:
+                self.leases[client_mac]['status'] = status
+                self.leases[client_mac]['last_seen'] = time.time()
+                self.save_leases()
+                log_message(f"已更新客户端 {client_mac} 状态为 {status}")
+        except Exception as e:
+            log_message(f"更新租约状态失败: {str(e)}", logging.ERROR)
+
+    def cleanup_expired_leases(self):
+        """清理过期租约"""
+        try:
+            current_time = time.time()
+            changed = False
+            for mac, lease in list(self.leases.items()):
+                if lease['expire'] < current_time:
+                    # 租约过期
+                    lease['status'] = '离线'
+                    changed = True
+                elif current_time - lease.get('last_seen', 0) > 300:  # 5分钟无活动
+                    lease['status'] = '离线'
+                    changed = True
+                else:
+                    # 检查是否能ping通客户端
+                    try:
+                        ip = lease['ip']
+                        if os.system(f"ping -n 1 -w 1000 {ip}" if os.name == 'nt' else f"ping -c 1 -W 1 {ip}") == 0:
+                            lease['status'] = '在线'
+                            lease['last_seen'] = current_time
+                            changed = True
+                    except:
+                        pass
+
+            if changed:
+                self.save_leases()
+        except Exception as e:
+            log_message(f"清理过期租约失败: {str(e)}", logging.ERROR)
+
+    def start(self):
+        """启动DHCP服务器"""
+        try:
+            # 创建主DHCP套接字
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            self.sock.bind(('0.0.0.0', 67))
+            log_message(f"DHCP服务器已启动，监听端口 67")
+
+            # 设置为阻塞模式
+            self.sock.setblocking(True)
+
+            # 启动服务器
+            self.running = True
+
+            # 启动状���检查线程
+            self.status_check_thread = threading.Thread(target=self.check_client_status)
+            self.status_check_thread.daemon = True
+            self.status_check_thread.start()
+
+            # 开始监听
+            while self.running:
+                try:
+                    # 使用select监听套接字
+                    readable, _, _ = select.select([self.sock], [], [], 1.0)
+                    if not readable:
+                        continue
+
+                    data, addr = self.sock.recvfrom(4096)
+                    # 创建新线程处理请求
+                    threading.Thread(target=self.handle_dhcp_packet, args=(data, addr)).start()
+
+                except select.error as e:
+                    if e.args[0] != errno.EINTR:
+                        log_message(f"套接字选择错误: {str(e)}", logging.ERROR)
+                except socket.error as e:
+                    if e.errno != errno.EAGAIN and e.errno != errno.EWOULDBLOCK:
+                        log_message(f"套接字错误: {str(e)}", logging.ERROR)
+                except Exception as e:
+                    log_message(f"处理DHCP请求时出错: {str(e)}", logging.ERROR)
+
+        except Exception as e:
+            log_message(f"启动服务器失败: {str(e)}", logging.ERROR)
+            raise
+        finally:
+            if hasattr(self, 'sock'):
+                self.sock.close()
+            self.running = False
+            log_message("DHCP服务器已停止")
+
+    def check_client_status(self):
+        """定期检查客户端状态"""
+        while self.running:
+            try:
+                self.cleanup_expired_leases()
+                time.sleep(60)  # 每分钟检查一次
+            except Exception as e:
+                log_message(f"检查客户端状态时出错: {str(e)}", logging.ERROR)
+                time.sleep(5)
 
     def handle_release(self, packet):
         """处理DHCP RELEASE消息"""
@@ -824,153 +1069,6 @@ class DHCPServer:
         response.options = options
         return response
 
-    def check_server_status(self):
-        """检查服务器状态"""
-        while self.running:
-            try:
-                with self._lock:
-                    if self.sock is None or self.sock._closed:
-                        logging.error("DHCP socket is closed or invalid")
-                        self.running = False
-                        break
-
-                    # 尝试非阻塞方式接收数据
-                    self.sock.setblocking(False)
-                    try:
-                        self.sock.recvfrom(1)
-                    except BlockingIOError:
-                        # 这是正常的，说明socket还在监听
-                        pass
-                    except Exception as e:
-                        logging.error(f"Socket error during status check: {e}")
-                        self.running = False
-                        break
-                    finally:
-                        self.sock.setblocking(True)
-
-                time.sleep(self.status_check_interval)
-            except Exception as e:
-                logging.error(f"Status check error: {e}")
-                break
-
-    def start(self):
-        """Start the DHCP server"""
-        with self._lock:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-
-            try:
-                # 尝试绑定到特定接口
-                if hasattr(socket, 'SO_BINDTODEVICE'):
-                    self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE,
-                                       self.interface.encode())
-            except Exception as e:
-                logging.warning(f"Could not bind to interface {self.interface}: {e}")
-
-            try:
-                self.sock.bind(('0.0.0.0', 67))
-            except Exception as e:
-                logging.error(f"Could not bind to port 67: {e}")
-                raise
-
-            self.running = True
-
-            # 启动状态检查线程
-            self.status_thread = threading.Thread(target=self.check_server_status)
-            self.status_thread.daemon = True
-            self.status_thread.start()
-
-            # 检测现有DHCP服务器
-            if self.proxy_mode and self.detect_dhcp:
-                self.detect_existing_dhcp_server()
-
-            logging.info(f"DHCP Server started on interface {self.interface}")
-            if self.proxy_mode:
-                if self.existing_dhcp_server:
-                    logging.info(f"Running in proxy mode, forwarding to {self.existing_dhcp_server}")
-                else:
-                    logging.info("Running in proxy mode, no existing DHCP server detected")
-
-            try:
-                while self.running:
-                    try:
-                        data, addr = self.sock.recvfrom(1024)
-                        self.handle_dhcp_packet(data, addr)
-                    except socket.timeout:
-                        continue
-                    except Exception as e:
-                        logging.error(f"Error in main loop: {e}")
-                        if not self.check_socket_valid():
-                            break
-            except KeyboardInterrupt:
-                logging.info("Received shutdown signal")
-            finally:
-                self.stop()
-
-    def check_socket_valid(self):
-        """检查socket是否有效"""
-        try:
-            with self._lock:
-                if self.sock is None or self.sock._closed:
-                    return False
-                # 尝试非阻塞方式接收数据
-                self.sock.setblocking(False)
-                try:
-                    self.sock.recvfrom(1)
-                except BlockingIOError:
-                    # 这是正常的，说明socket还在监听
-                    return True
-                except Exception:
-                    return False
-                finally:
-                    self.sock.setblocking(True)
-            return True
-        except Exception:
-            return False
-
-    def stop(self):
-        """Stop the DHCP server"""
-        with self._lock:
-            logging.info("Shutting down DHCP server...")
-            self.running = False
-            if self.sock:
-                try:
-                    self.sock.close()
-                except Exception as e:
-                    logging.error(f"Error closing socket: {e}")
-            if self.proxy_sock:
-                try:
-                    self.proxy_sock.close()
-                except Exception as e:
-                    logging.error(f"Error closing proxy socket: {e}")
-
-            # 等待状态检查线程结束
-            if self.status_thread and self.status_thread.is_alive():
-                self.status_thread.join(timeout=5)
-
-            logging.info("DHCP server stopped")
-
-    def load_leases(self):
-        """加载DHCP租约信息"""
-        try:
-            if os.path.exists(self.leases_file):
-                with open(self.leases_file, 'r') as f:
-                    self.leases = json.load(f)
-            else:
-                self.leases = {}
-        except Exception as e:
-            logging.error(f"加载租约文件失败: {e}")
-            self.leases = {}
-
-    def save_leases(self):
-        """保存DHCP租约信息"""
-        try:
-            with open(self.leases_file, 'w') as f:
-                json.dump(self.leases, f, indent=2)
-        except Exception as e:
-            logging.error(f"保存租约文件失败: {e}")
-
     def is_uefi_client(self, packet):
         """检测客户端是否为UEFI模式"""
         try:
@@ -996,51 +1094,92 @@ class DHCPServer:
             logging.error(f"检测UEFI模式时出错: {e}")
             return False
 
-    def update_lease(self, mac, ip, hostname=None, bios_mode=None, boot_file=None):
-        """更新租约信息"""
+    def validate_request(self, client_mac, requested_ip):
+        """验证IP请求是否有效"""
         try:
-            current_time = time.time()
-            mac = mac.lower()  # 统一使用小写MAC地址
+            if not requested_ip:
+                return False
 
-            # 如果IP在可用池中，移除它
-            if ip in self.available_ips:
-                self.available_ips.remove(ip)
+            # 检查是否是已分配的IP
+            if client_mac in self.leases:
+                lease = self.leases[client_mac]
+                if lease['ip'] == requested_ip:
+                    return True
 
-            # 更新租约信息
-            self.leases[mac] = {
-                'ip': ip,
-                'hostname': hostname,
-                'bios_mode': bios_mode or 'Legacy',
-                'boot_file': boot_file,
-                'last_seen': current_time,
-                'first_seen': self.leases.get(mac, {}).get('first_seen', current_time),
-                'expire': current_time + self.lease_time
-            }
+            # 检查是否是可用IP
+            start_ip = ipaddress.IPv4Address(self.pool_start)
+            end_ip = ipaddress.IPv4Address(self.pool_end)
+            requested = ipaddress.IPv4Address(requested_ip)
 
-            # 立即保存到文件
-            try:
-                with open(self.leases_file, 'w') as f:
-                    json.dump(self.leases, f, indent=2)
-                logging.info(f"租约已保存到文件: {mac} -> {ip}")
-            except Exception as e:
-                logging.error(f"保存租约文件失败: {e}")
+            if start_ip <= requested <= end_ip:
+                if requested_ip in self.available_ips:
+                    self.available_ips.remove(requested_ip)
+                return True
 
-            logging.info(f"更新租约: {mac} -> {ip} ({bios_mode})")
+            return False
         except Exception as e:
-            logging.error(f"更新租约失败: {e}")
+            log_message(f"验证IP请求失败: {str(e)}", logging.ERROR)
+            return False
 
-    def is_ipxe_client(self, packet):
-        """检查是否是iPXE客户端"""
-        if 60 in packet.options:  # 检查用户类别选项
-            try:
-                user_class = packet.options[60].decode('ascii', errors='ignore')
-                return 'iPXE' in user_class
-            except:
-                pass
-        return False
+    def handle_proxy_dhcp_packet(self, data, addr):
+        """处理 ProxyDHCP 请求"""
+        try:
+            packet = DHCPPacket.unpack(data)
+            client_mac = ':'.join(f'{b:02x}' for b in packet.chaddr[:6])
+
+            if 53 in packet.options:  # DHCP Message Type
+                msg_type = packet.options[53][0]
+
+                if msg_type == 1:  # DISCOVER
+                    response = self.handle_proxy_discover(packet)
+                    if response:
+                        try:
+                            response_data = response.pack()
+                            # 发送响应到 ProxyDHCP 端口
+                            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as send_sock:
+                                send_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                                send_sock.sendto(response_data, (addr[0], 68))
+                                log_message(f"已发送 ProxyDHCP 响应到客户端 {client_mac}")
+                        except Exception as e:
+                            log_message(f"发送 ProxyDHCP 响应失败: {str(e)}", logging.ERROR)
+
+        except Exception as e:
+            log_message(f"处理 ProxyDHCP 请求时出错: {str(e)}", logging.ERROR)
+
+    def handle_proxy_discover(self, packet):
+        """处理 ProxyDHCP DISCOVER 请求"""
+        response = DHCPPacket()
+        response.op = 2  # BOOTREPLY
+        response.htype = packet.htype
+        response.hlen = packet.hlen
+        response.xid = packet.xid
+        response.flags = packet.flags
+        response.chaddr = packet.chaddr
+
+        # 设置 ProxyDHCP 选项
+        options = {
+            53: bytes([2]),  # DHCP Offer
+            54: socket.inet_aton(self.server_ip),  # Server Identifier
+            60: b'PXEClient',
+            66: self.tftp_server.encode('ascii'),  # TFTP Server
+            67: self.default_boot_filename.encode('ascii'),  # Bootfile Name
+        }
+
+        # 根据客户端架构选择引导文件
+        if 93 in packet.options:  # Client System Architecture
+            arch = int.from_bytes(packet.options[93], byteorder='big')
+            if arch == 0:  # BIOS
+                options[67] = b'pxelinux.0'
+            elif arch == 7:  # UEFI x64
+                options[67] = b'snponly.efi'
+            elif arch == 9:  # UEFI x86
+                options[67] = b'ipxe-ia32.efi'
+
+        response.options = options
+        return response
 
 if __name__ == '__main__':
-    # 局变量
+    # 变量
     server = None
 
     def signal_handler(signum, frame):
@@ -1063,7 +1202,7 @@ if __name__ == '__main__':
         try:
             with open(pid_file, 'w') as f:
                 f.write(str(os.getpid()))
-            # 设置适当的文件权限
+            # 设置适当的件权限
             if os.name != 'nt':
                 os.chmod(pid_file, 0o644)
         except Exception as e:
@@ -1089,157 +1228,110 @@ if __name__ == '__main__':
         except Exception as e:
             logging.error(f"Failed to remove PID file: {e}")
 
-    def stop_server():
-        """停止服务器"""
-        pid = read_pid()
-        if pid:
-            try:
-                if os.name == 'nt':  # Windows系统
-                    kernel32 = ctypes.windll.kernel32
-                    handle = kernel32.OpenProcess(1, False, pid)
-                    if handle:
-                        kernel32.TerminateProcess(handle, 0)
-                        kernel32.CloseHandle(handle)
-                else:  # Unix系统
-                    os.kill(pid, signal.SIGTERM)
-
-                logging.info(f"Sent stop signal to process {pid}")
-
-                # 等待进程结束
-                for _ in range(10):
-                    try:
-                        if os.name == 'nt':
-                            handle = kernel32.OpenProcess(1, False, pid)
-                            if not handle:
-                                break
-                            kernel32.CloseHandle(handle)
-                        else:
-                            os.kill(pid, 0)
-                        time.sleep(0.5)
-                    except (ProcessLookupError, OSError):
-                        break
-
-                remove_pid()
-            except (ProcessLookupError, OSError):
-                logging.warning(f"Process {pid} not found")
-                remove_pid()
-            except PermissionError:
-                logging.error(f"Permission denied to stop process {pid}")
-                sys.exit(1)
-            except Exception as e:
-                logging.error(f"Failed to stop server: {e}")
-                sys.exit(1)
-        else:
-            logging.info("No running server found")
-
     def start_server():
         """启动服务器"""
         global server
-
-        # 检查是否已经运行
-        pid = read_pid()
-        if pid:
-            try:
-                if os.name == 'nt':  # Windows系统
-                    kernel32 = ctypes.windll.kernel32
-                    handle = kernel32.OpenProcess(1, False, pid)
-                    if handle:
-                        kernel32.CloseHandle(handle)
-                        logging.error(f"Server is already running with PID {pid}")
-                        sys.exit(1)
-                else:  # Unix系统
-                    os.kill(pid, 0)
-                    logging.error(f"Server is already running with PID {pid}")
-                    sys.exit(1)
-            except (ProcessLookupError, OSError):
-                remove_pid()
-
-        # 设置信号处理
-        signal.signal(signal.SIGINT, signal_handler)
-        if os.name != 'nt':  # 在Unix系统上设置SIGTERM
-            signal.signal(signal.SIGTERM, signal_handler)
-
-        if os.name == 'nt':  # Windows系统
-            # 检查管理员权限
-            try:
-                is_admin = ctypes.windll.shell32.IsUserAnAdmin()
-                if not is_admin:
-                    logging.error("DHCP server requires administrator privileges")
-                    sys.exit(1)
-            except:
-                logging.error("Failed to check administrator privileges")
-                sys.exit(1)
-
-            # 创建新进程
-            if not args.daemon:  # 如果不是已经在守护进程中
-                try:
-                    # 使用pythonw.exe启动无窗口进程
-                    pythonw = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
-                    if not os.path.exists(pythonw):
-                        pythonw = sys.executable
-
-                    # 创建启动信息以隐藏窗口
-                    startupinfo = subprocess.STARTUPINFO()
-                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                    startupinfo.wShowWindow = subprocess.SW_HIDE
-
-                    # 启动守护进程
-                    subprocess.Popen(
-                        [pythonw, __file__, '-c', args.config, '-d', 'start'],
-                        cwd=os.getcwd(),
-                        startupinfo=startupinfo,
-                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
-                    )
-                    sys.exit(0)
-                except Exception as e:
-                    logging.error(f"Failed to create daemon process: {e}")
-                    sys.exit(1)
-
-        else:  # Unix系统
-            # 守护进程模式
-            if args.daemon and os.name == 'posix':
-                try:
-                    pid = os.fork()
-                    if pid > 0:
-                        sys.exit(0)
-                except OSError as e:
-                    logging.error(f"Fork failed: {e}")
-                    sys.exit(1)
-
-                os.chdir('/')
-                os.setsid()
-                os.umask(0)
-
-                try:
-                    pid = os.fork()
-                    if pid > 0:
-                        sys.exit(0)
-                except OSError as e:
-                    logging.error(f"Second fork failed: {e}")
-                    sys.exit(1)
-
-                sys.stdout.flush()
-                sys.stderr.flush()
-                with open(os.devnull, 'r') as f:
-                    os.dup2(f.fileno(), sys.stdin.fileno())
-                with open(os.devnull, 'a+') as f:
-                    os.dup2(f.fileno(), sys.stdout.fileno())
-                with open(os.devnull, 'a+') as f:
-                    os.dup2(f.fileno(), sys.stderr.fileno())
-
-        # 写入PID文件
-        write_pid()
-
         try:
+            log_message("正在启动DHCP服务器...")
+            # ��查是否已经运行
+            pid = read_pid()
+            if pid:
+                try:
+                    if os.name == 'nt':
+                        kernel32 = ctypes.windll.kernel32
+                        handle = kernel32.OpenProcess(1, False, pid)
+                        if handle:
+                            kernel32.CloseHandle(handle)
+                            raise Exception(f"服务器已在运行中 (PID: {pid})")
+                    else:
+                        os.kill(pid, 0)
+                        raise Exception(f"服务器已在运行中 (PID: {pid})")
+                except (ProcessLookupError, OSError):
+                    remove_pid()
+
+            # 检查端口是否被占用
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                sock.bind(('0.0.0.0', 67))
+                sock.close()
+            except Exception as e:
+                raise Exception(f"端口 67 被占用: {str(e)}")
+
+            # 写入PID文件
+            write_pid()
+
             # 启动服务器
+            log_message("正在启动DHCP服务器...")
             server = DHCPServer(args.config)
             server.start()
+            return True
         except Exception as e:
-            logging.error(f"Failed to start server: {e}")
-            remove_pid()
-            sys.exit(1)
-        finally:
-            remove_pid()
+            log_message(f"启动服务器失败: {str(e)}", logging.ERROR)
+            if os.path.exists(pid_file):
+                remove_pid()
+            return False
+
+    def stop_server():
+        """停止服务器"""
+        try:
+            log_message("正在停止DHCP服务器...")
+            pid = read_pid()
+            if pid:
+                try:
+                    if os.name == 'nt':  # Windows系统
+                        kernel32 = ctypes.windll.kernel32
+                        handle = kernel32.OpenProcess(1, False, pid)
+                        if handle:
+                            kernel32.TerminateProcess(handle, 0)
+                            kernel32.CloseHandle(handle)
+                    else:  # Unix系统
+                        os.kill(pid, signal.SIGTERM)
+
+                    log_message(f"已发送停止信号到进程 {pid}")
+
+                    # 等待进程结束
+                    max_wait = 10
+                    while max_wait > 0:
+                        try:
+                            if os.name == 'nt':
+                                handle = kernel32.OpenProcess(1, False, pid)
+                                if not handle:
+                                    break
+                                kernel32.CloseHandle(handle)
+                            else:
+                                os.kill(pid, 0)
+                            time.sleep(0.5)
+                            max_wait -= 1
+                        except (ProcessLookupError, OSError):
+                            break
+
+                    # 确保进程已完全停止
+                    if max_wait == 0:
+                        if os.name == 'nt':
+                            os.system(f'taskkill /F /PID {pid}')
+                        else:
+                            os.kill(pid, signal.SIGKILL)
+                        log_message("强制终止进程")
+
+                    # 等待端口释放
+                    time.sleep(2)
+
+                    remove_pid()
+                    log_message("DHCP服务器已停止")
+                    return True
+                except (ProcessLookupError, OSError):
+                    log_message("进程已经停止")
+                    remove_pid()
+                    return True
+                except Exception as e:
+                    log_message(f"停止服务器时出错: {str(e)}", logging.ERROR)
+                    return False
+            else:
+                log_message("未找到运行中的服务器进程")
+                return True
+        except Exception as e:
+            log_message(f"停止服务器失败: {str(e)}", logging.ERROR)
+            return False
 
     # 设置命令行参数
     parser = argparse.ArgumentParser(description='DHCP Server with PXE support')
@@ -1259,18 +1351,30 @@ if __name__ == '__main__':
             try:
                 os.makedirs(pid_dir)
             except Exception as e:
-                logging.error(f"Failed to create PID directory: {e}")
+                logging.error(f"创建PID目录失败: {str(e)}")
                 sys.exit(1)
         pid_file = os.path.join(pid_dir, 'dhcp_server.pid')
     else:  # Unix系统
         pid_file = '/var/run/dhcp_server.pid' if os.geteuid() == 0 else os.path.join(tempfile.gettempdir(), 'dhcp_server.pid')
 
     # 执行命令
-    if args.action == 'start':
-        start_server()
-    elif args.action == 'stop':
-        stop_server()
-    elif args.action == 'restart':
-        stop_server()
-        time.sleep(1)  # 等待端口释放
-        start_server()
+    try:
+        if args.action == 'start':
+            log_message("执行启动命令...")
+            if not start_server():
+                sys.exit(1)
+        elif args.action == 'stop':
+            log_message("执行停止命令...")
+            if not stop_server():
+                sys.exit(1)
+        elif args.action == 'restart':
+            log_message("执行重启命令...")
+            if not stop_server():
+                sys.exit(1)
+            time.sleep(2)
+            if not start_server():
+                sys.exit(1)
+            log_message("DHCP服务器重启完成")
+    except Exception as e:
+        log_message(f"执行操作失败: {str(e)}", logging.ERROR)
+        sys.exit(1)

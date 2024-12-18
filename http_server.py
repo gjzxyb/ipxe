@@ -226,7 +226,7 @@ class SecureHTTPServer:
                     'endpoints': []
                 }
             }
-            logging.warning("使用默认配置")
+            logging.warning("使用��认配置")
         except yaml.YAMLError as e:
             logging.error(f"配置文件格式错误: {e}")
             raise
@@ -373,7 +373,7 @@ class SecureHTTPServer:
                     else:
                         logging.warning(f"Port {port} is in use, attempting to clean up...")
                         self.kill_process_by_port(port)
-                        time.sleep(1)  # 等待进程完全终止
+                        time.sleep(1)  # 等待进程全终止
 
                         # 再次尝试绑定端口
                         try:
@@ -603,7 +603,7 @@ def check_dhcp_server_running():
         with open(pid_file, 'r') as f:
             pid = int(f.read().strip())
 
-        # 检查进��是否存在
+        # 检查进程是否存在
         if os.name == 'nt':  # Windows
             import ctypes
             kernel32 = ctypes.windll.kernel32
@@ -716,7 +716,7 @@ def kill_http_server():
             pid_file = '/var/run/http_server.pid' if os.geteuid() == 0 else \
                       os.path.join(tempfile.gettempdir(), 'http_server.pid')
 
-        # 如果PID文件存在尝试终止进程
+        # 如果PID文件存在��试终止进程
         if os.path.exists(pid_file):
             try:
                 with open(pid_file, 'r') as f:
@@ -818,59 +818,7 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                 elif path == '/api/bootfiles':
                     self.handle_bootfiles()
                 elif path == '/api/config/ipxe':
-                    try:
-                        # 解析请求数据
-                        data = json.loads(post_data)
-
-                        if 'boot_filename' not in data:
-                            self.send_error(400, "Missing boot_filename parameter")
-                            return
-
-                        # 读取现有配置文件内容
-                        config_file = 'config.yaml'
-                        if os.path.exists(config_file):
-                            with open(config_file, 'r', encoding='utf-8') as f:
-                                content = f.read()
-                        else:
-                            content = ''
-
-                        # 获取当前服务器地址和端口
-                        server_address = self.headers.get('Host', 'localhost:8080')
-                        file_server_url = f"http://{server_address}/bootfile"
-
-                        # 如果文件为空或不存在，创建基本结构
-                        if not content.strip():
-                            content = f'file_server: "{file_server_url}"\nboot_filename: ""\n'
-
-                        # 使用正则表达式替换 file_server 和 boot_filename 的值
-                        new_content = content
-                        # 替换 file_server
-                        new_content = re.sub(
-                            r'file_server:\s*"[^"]*"',
-                            f'file_server: "{file_server_url}"',
-                            new_content
-                        )
-                        # 替换 boot_filename
-                        new_content = re.sub(
-                            r'boot_filename:\s*"[^"]*"',
-                            f'boot_filename: "{data["boot_filename"]}"',
-                            new_content
-                        )
-
-                        # 如果没有找到相应的配置项，添加到文件末尾
-                        if 'file_server:' not in content:
-                            new_content = f'file_server: "{file_server_url}"\n{new_content}'
-                        if 'boot_filename:' not in content:
-                            new_content += f'\nboot_filename: "{data["boot_filename"]}"\n'
-
-                        # 保存更新后的配置
-                        with open(config_file, 'w', encoding='utf-8') as f:
-                            f.write(new_content)
-
-                        self.send_json_response({'success': True})
-                    except Exception as e:
-                        logging.error(f"Error saving iPXE config: {e}")
-                        self.send_error(500, f"Failed to save config: {str(e)}")
+                    self.handle_ipxe_config_get()
                     return
                 else:
                     self.send_error(404, "API endpoint not found")
@@ -891,6 +839,22 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             except Exception as e:
                 logging.error(f"Error serving file: {e}")
                 self.send_error(500, f"Internal server error: {str(e)}")
+
+            # 处理 favicon.ico 请求
+            if path == '/favicon.ico':
+                try:
+                    with open('favicon.ico', 'rb') as f:
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'image/x-icon')
+                        self.end_headers()
+                        self.wfile.write(f.read())
+                except FileNotFoundError:
+                    # 如果没有图标文件，返回空响应
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'image/x-icon')
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
+                return
 
         except Exception as e:
             logging.error(f"Error handling request: {e}")
@@ -1080,59 +1044,7 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 
             # 处理 iPXE 配置
             elif path == '/api/config/ipxe':
-                try:
-                    # 解析请求数据
-                    data = json.loads(post_data)
-
-                    if 'boot_filename' not in data:
-                        self.send_error(400, "Missing boot_filename parameter")
-                        return
-
-                    # 读取现有配置文件内容
-                    config_file = 'config.yaml'
-                    if os.path.exists(config_file):
-                        with open(config_file, 'r', encoding='utf-8') as f:
-                            content = f.read()
-                    else:
-                        content = ''
-
-                    # 获取当前服务器地址和端口
-                    server_address = self.headers.get('Host', 'localhost:8080')
-                    file_server_url = f"http://{server_address}/bootfile"
-
-                    # 如果文件为空或不存在，创建基本结构
-                    if not content.strip():
-                        content = f'file_server: "{file_server_url}"\nboot_filename: ""\n'
-
-                    # 使用正则表达式替换 file_server 和 boot_filename 的值
-                    new_content = content
-                    # 替换 file_server
-                    new_content = re.sub(
-                        r'file_server:\s*"[^"]*"',
-                        f'file_server: "{file_server_url}"',
-                        new_content
-                    )
-                    # 替换 boot_filename
-                    new_content = re.sub(
-                        r'boot_filename:\s*"[^"]*"',
-                        f'boot_filename: "{data["boot_filename"]}"',
-                        new_content
-                    )
-
-                    # 如果没有找到相应的配置项，添加到文件末尾
-                    if 'file_server:' not in content:
-                        new_content = f'file_server: "{file_server_url}"\n{new_content}'
-                    if 'boot_filename:' not in content:
-                        new_content += f'\nboot_filename: "{data["boot_filename"]}"\n'
-
-                    # 保存更新后的配置
-                    with open(config_file, 'w', encoding='utf-8') as f:
-                        f.write(new_content)
-
-                    self.send_json_response({'success': True})
-                except Exception as e:
-                    logging.error(f"Error saving iPXE config: {e}")
-                    self.send_error(500, f"Failed to save config: {str(e)}")
+                self.handle_ipxe_config_post()
                 return
 
             self.send_error(404, "API endpoint not found")
@@ -1145,7 +1057,7 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         """控制DHCP服务器"""
         try:
             current_dir = os.getcwd()
-            python_cmd = sys.executable if os.name == 'nt' else 'python'
+            python_cmd = sys.executable if os.name == 'nt' else 'python3'
             dhcp_script = os.path.join(current_dir, 'dhcp_server.py')
 
             # Windows下设置启动标志以隐藏窗口
@@ -1156,21 +1068,11 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                 startupinfo.wShowWindow = subprocess.SW_HIDE
 
             if action == 'start':
-                # 确保先停止所有可能的实例
+                # 确保停止所有可能的实例
                 if check_dhcp_server_running():
                     logging.info("检测到DHCP服务器正在运行，尝试停止...")
                     kill_dhcp_server()
-                    # 等待程完全停止
-                    for _ in range(10):
-                        if not check_dhcp_server_running():
-                            break
-                        time.sleep(0.5)
-                    else:
-                        return {
-                            'success': False,
-                            'status': 'unknown',
-                            'error': '无法停止现有的DHCP服务器进程'
-                        }
+                    time.sleep(2)  # 等待进程完全停止
 
                 # 确保PID文件被清理
                 pid_file = get_dhcp_pid_file()
@@ -1182,42 +1084,44 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 
                 # 启动服务器
                 try:
+                    # 使用 subprocess.Popen 而不是 subprocess.run
                     process = subprocess.Popen(
-                        [python_cmd, dhcp_script, 'start'],
+                        [python_cmd, dhcp_script, '-c', 'config.yaml', '-d', 'start'],
                         cwd=current_dir,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
-                        startupinfo=startupinfo
+                        startupinfo=startupinfo,
+                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
                     )
 
-                    # 获取输出信息
-                    stdout, stderr = process.communicate(timeout=5)
-                    if stdout:
-                        logging.info(f"DHCP server output: {stdout.decode('utf-8', errors='ignore')}")
-                    if stderr:
-                        logging.error(f"DHCP server error: {stderr.decode('utf-8', errors='ignore')}")
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    stdout, stderr = process.communicate()
+                    # 等待一段时间让服务器启动
+                    time.sleep(2)
 
-                # 等待启动并检查状态
-                time.sleep(2)
-                for _ in range(3):
+                    # 检查服务器是否成功启动
                     if check_dhcp_server_running():
+                        logging.info("DHCP服务器启动成功")
                         return {
                             'success': True,
                             'status': 'running'
                         }
-                    time.sleep(1)
+                    else:
+                        # 读取错误输出
+                        _, stderr = process.communicate(timeout=1)
+                        error_msg = stderr.decode('utf-8', errors='ignore') if stderr else "未知错误"
+                        logging.error(f"DHCP服务器启动失败: {error_msg}")
+                        return {
+                            'success': False,
+                            'status': 'stopped',
+                            'error': f"启动失败: {error_msg}"
+                        }
 
-                error_msg = "DHCP服务器启动失败"
-                if stderr:
-                    error_msg += f": {stderr.decode('utf-8', errors='ignore')}"
-                return {
-                    'success': False,
-                    'status': 'stopped',
-                    'error': error_msg
-                }
+                except Exception as e:
+                    logging.error(f"启动DHCP服务器时出错: {str(e)}")
+                    return {
+                        'success': False,
+                        'status': 'stopped',
+                        'error': str(e)
+                    }
 
             elif action == 'stop':
                 if not check_dhcp_server_running():
@@ -1253,7 +1157,7 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                         }
                     time.sleep(0.5)
 
-                # 如果还在运行，强制终止
+                # 果还在运行，强制终止
                 kill_dhcp_server()
                 time.sleep(1)
 
@@ -1336,8 +1240,12 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             return {'success': False, 'status': 'unknown', 'error': 'Invalid action'}
 
         except Exception as e:
-            logging.error(f"Error controlling DHCP server: {e}")
-            return {'success': False, 'status': 'unknown', 'error': str(e)}
+            logging.error(f"控制DHCP服务器时出错: {str(e)}")
+            return {
+                'success': False,
+                'status': 'unknown',
+                'error': str(e)
+            }
 
     def control_http_server(self, action):
         """控制HTTP服务器"""
@@ -1428,7 +1336,7 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             return False
 
         except Exception as e:
-            logging.error(f"Error controlling HTTP server: {e}")
+            logging.error(f"控制HTTP服务器时出错: {e}")
             return False
 
     def handle_status(self):
@@ -1602,7 +1510,7 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                     deleted_device = leases[mac]
                     # 从约中删除设备
                     del leases[mac]
-                    # 如果设备有IP地址，将其返回到可用池中
+                    # 如果设备有IP地址，将其返回到可用池��
                     if 'ip' in deleted_device:
                         logging.info(f"IP {deleted_device['ip']} returned to pool")
                     # 重写文件
@@ -1696,24 +1604,38 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 
             if os.path.exists(dhcp_leases_file):
                 try:
-                    with open(dhcp_leases_file, 'r') as f:
+                    with open(dhcp_leases_file, 'r', encoding='utf-8') as f:
                         leases = json.load(f)
                         current_time = time.time()
+
                         for mac, info in leases.items():
-                            # 计算在线状态（5分钟内有活动则认为在线）
-                            last_seen = info.get('last_seen', 0)
-                            online = (current_time - last_seen) < 300
+                            # 检查租约是否过期
+                            if 'expire' in info and info['expire'] > current_time:
+                                # 检查最后活动时间
+                                last_seen = info.get('last_seen', 0)
+                                if current_time - last_seen < 300:  # 5分钟内有活动
+                                    status = info.get('status', '在线')  # 使用保存的状态或默认为在线
+                                else:
+                                    # 尝试ping检测
+                                    ip = info.get('ip', '')
+                                    if ip and self.ping_host(ip):
+                                        status = '在线'
+                                    else:
+                                        status = '离线'
+                            else:
+                                status = '离线'
 
                             devices.append({
                                 'mac': mac,
-                                'ip': info.get('ip'),
-                                'hostname': info.get('hostname'),
+                                'ip': info.get('ip', ''),
+                                'hostname': info.get('hostname', ''),
                                 'bios_mode': info.get('bios_mode', 'Unknown'),
-                                'boot_file': info.get('boot_file'),
-                                'last_seen': last_seen,
-                                'online': online
+                                'boot_file': info.get('boot_file', ''),
+                                'last_seen': info.get('last_seen', 0),
+                                'status': status
                             })
-                        logging.info(f"Found {len(devices)} devices in lease file")
+
+                    logging.info(f"Found {len(devices)} devices in lease file")
                 except json.JSONDecodeError as e:
                     logging.error(f"租约文件格式错误: {e}")
                 except Exception as e:
@@ -1721,10 +1643,30 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             else:
                 logging.info("租约文件不存在")
 
+            # 按状态排序，在线的排在前面
+            devices.sort(key=lambda x: (x['status'] != '在线', x['mac']))
+
             self.send_json_response(devices)
         except Exception as e:
             logging.error(f"获取设备列表失败: {e}")
             self.send_error(500, str(e))
+
+    def ping_host(self, ip):
+        """检查主机是否在线"""
+        try:
+            # Windows 系统
+            if os.name == 'nt':
+                ping_cmd = ['ping', '-n', '1', '-w', '1000', ip]
+            # Unix 系统
+            else:
+                ping_cmd = ['ping', '-c', '1', '-W', '1', ip]
+
+            # 执行ping命令
+            result = subprocess.run(ping_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return result.returncode == 0
+        except Exception as e:
+            logging.error(f"Ping检测失败: {e}")
+            return False
 
     def handle_bootfiles(self):
         """获取bootfile文件夹中的EFI文件列表"""
@@ -1819,6 +1761,70 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             'restart': '重启'
         }
         return names.get(action, action)
+
+    def handle_ipxe_config_get(self):
+        """处理 iPXE 配置的 GET 请求"""
+        try:
+            config_file = 'config.yaml'
+            if os.path.exists(config_file):
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f)
+                    # 从配置中提取 iPXE 相关设置
+                    pxe_config = config.get('pxe', {})
+                    ipxe_config = {
+                        'boot_filename': pxe_config.get('default_boot_filename', 'ipxe.efi'),
+                        'tftp_server': pxe_config.get('tftp_server', ''),
+                        'enabled': pxe_config.get('enabled', False)
+                    }
+                    self.send_json_response(ipxe_config)
+            else:
+                self.send_json_response({
+                    'boot_filename': 'ipxe.efi',
+                    'tftp_server': '',
+                    'enabled': False
+                })
+        except Exception as e:
+            logging.error(f"Error reading iPXE config: {str(e)}")
+            self.send_error(500, f"Failed to read config: {str(e)}")
+
+    def handle_ipxe_config_post(self):
+        """处理 iPXE 配置的 POST 请求"""
+        try:
+            # 读取请求体
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode('utf-8')
+            data = json.loads(body)
+
+            if 'boot_filename' not in data:
+                self.send_error(400, "Missing boot_filename parameter")
+                return
+
+            # 读取现有配置
+            config_file = 'config.yaml'
+            config = {}
+            if os.path.exists(config_file):
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+
+            # 更新配置
+            if 'pxe' not in config:
+                config['pxe'] = {}
+
+            config['pxe']['default_boot_filename'] = data['boot_filename']
+            config['pxe']['enabled'] = True
+
+            # 保存配置
+            with open(config_file, 'w', encoding='utf-8') as f:
+                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+
+            self.send_json_response({'success': True, 'message': 'iPXE配置已更新'})
+
+        except json.JSONDecodeError as e:
+            logging.error(f"Invalid JSON in request: {str(e)}")
+            self.send_error(400, "Invalid JSON format")
+        except Exception as e:
+            logging.error(f"Error saving iPXE config: {str(e)}")
+            self.send_error(500, f"Failed to save config: {str(e)}")
 
 
 if __name__ == '__main__':

@@ -4,12 +4,6 @@ server:
   subnet_mask: "255.255.255.0"
   broadcast_address: "192.168.1.255"
 
-proxy_mode:
-  enabled: false
-  detect_existing_dhcp: false
-  existing_dhcp_server: "192.168.1.1"
-  proxy_timeout: 5
-
 dhcp:
   pool_start: "192.168.1.100"
   pool_end: "192.168.1.222"
@@ -24,14 +18,14 @@ options:
 
 pxe:
   enabled: true
-  tftp_server: "192.168.1.1"  # 您的TFTP服务器IP
-  default_boot_filename: "undionly.kpxe"  # 默认iPXE引导文件
+  tftp_server: "192.168.1.88"
+  default_boot_filename: "pxelinux.0"
   architecture_specific:
     - arch: 0  # BIOS/x86
-      boot_filename: "undionly.kpxe"
+      boot_filename: "pxelinux.0"
     - arch: 7  # UEFI x64
-      boot_filename: "ipxe.efi"
-    - arch: 9  # UEFI x86-32
+      boot_filename: "snponly.efi"
+    - arch: 9  # UEFI x86
       boot_filename: "ipxe-ia32.efi"
   ipxe:
     enabled: true

@@ -1607,7 +1607,7 @@
             const statusElement = document.getElementById('tftp-status');
 
             try {
-                // 更新UI状态为处理中
+                // 更新UI状态为处理��
                 statusElement.className = 'server-status';
                 statusElement.innerHTML = `
                     <span>🔄</span>
@@ -2125,6 +2125,30 @@
             } catch (error) {
                 showNotification('处理ISO文件失败: ' + error.message, 'error');
             }
+        }
+
+        // 更新设备列表显示
+        function updateDeviceList(devices) {
+            const deviceList = document.querySelector('.device-list');
+            if (!deviceList) return;
+
+            deviceList.innerHTML = devices.map(device => `
+                <tr>
+                    <td>${device.mac}</td>
+                    <td>${device.ip}</td>
+                    <td>${device.bios_mode || 'Unknown'}</td>
+                    <td>${device.boot_file || '-'}</td>
+                    <td><span class="status-${device.status === '在线' ? 'online' : 'offline'}">${device.status}</span></td>
+                    <td>
+                        <button class="btn btn-sm btn-edit" onclick="editDevice('${device.mac}')">
+                            <span>📝</span>编辑
+                        </button>
+                        <button class="btn btn-sm btn-delete" onclick="deleteDevice('${device.mac}')">
+                            <span>🗑️</span>删除
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
         }
     </script>
 </body>
