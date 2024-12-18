@@ -23,45 +23,69 @@ import errno
 import select
 import errno
 
-# 确保日志目录存在
-log_dir = os.path.dirname('dhcp_server.log')
-if log_dir and not os.path.exists(log_dir):
-    os.makedirs(log_dir)
+# 修改日志配置部分
+def setup_logging():
+    """设置日志配置"""
+    try:
+        # 确保日志目录存在
+        log_dir = os.path.dirname('dhcp_server.log')
+        if log_dir and not os.path.exists(log_dir):
+            os.makedirs(log_dir)
 
-# 设置默认编码为UTF-8
-if sys.stdout.encoding != 'utf-8':
-    if hasattr(sys.stdout, 'reconfigure'):
-        sys.stdout.reconfigure(encoding='utf-8')
-    else:
-        import codecs
-        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer)
+        # 移除所有现有的处理器
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
 
-if sys.stderr.encoding != 'utf-8':
-    if hasattr(sys.stderr, 'reconfigure'):
-        sys.stderr.reconfigure(encoding='utf-8')
-    else:
-        sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer)
+        # 创建文件处理器 - 记录所有级别的日志
+        file_handler = logging.FileHandler('dhcp_server.log', encoding='utf-8', mode='a')
+        file_handler.setFormatter(logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(message)s'
+        ))
+        file_handler.setLevel(logging.DEBUG)  # ��记录所有日志
 
-# 配置日志处理器
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('dhcp_server.log', encoding='utf-8'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
+        # 创建控制台处理器 - 只记录重要信息
+        if not ('pythonw.exe' in sys.executable and os.name == 'nt'):
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(logging.Formatter(
+                '%(asctime)s - %(levelname)s - %(message)s'
+            ))
+            console_handler.setLevel(logging.INFO)  # 控制台只显示 INFO 及以上级别
+            root_logger.addHandler(console_handler)
 
-# 修改日志记录函数
+        # 添加文件处理器
+        root_logger.addHandler(file_handler)
+        root_logger.setLevel(logging.DEBUG)  # 允许记录所有级别的日志
+
+    except Exception as e:
+        print(f"设置日志失败: {e}")
+        sys.exit(1)
+
 def log_message(message, level=logging.INFO):
     """记录日志消息"""
     try:
-        # 确保消息是UTF-8编码
         if isinstance(message, bytes):
             message = message.decode('utf-8')
-        logging.log(level, message)
+
+        # 获取根日志记录器
+        logger = logging.getLogger()
+
+        # 检查是否有有效的处理器
+        if not logger.handlers:
+            setup_logging()
+
+        # 记录消息
+        logger.log(level, message)
+
     except Exception as e:
-        print(f"日志记录失败: {e}")
+        # 如果日志记录失败，尝试直接写入文件
+        try:
+            with open('dhcp_server.log', 'a', encoding='utf-8') as f:
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                f.write(f"{timestamp} - {message}\n")
+                f.flush()
+        except:
+            pass
 
 # 在需要记录日志的地方使用
 def start_server():
@@ -69,7 +93,84 @@ def start_server():
     global server
     try:
         log_message("正在启动DHCP服务器...")
-        # ... 其他代码保持不变 ...
+
+        # 检查是否已经运行
+        pid = read_pid()
+        if pid:
+            try:
+                if os.name == 'nt':
+                    # 使用tasklist检查进程是否真实存在
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = subprocess.SW_HIDE
+                    output = subprocess.check_output(
+                        ['tasklist', '/FI', f'PID eq {pid}'],
+                        startupinfo=startupinfo,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                    if str(pid) in output.decode():
+                        raise Exception(f"服务器已在运行中 (PID: {pid})")
+                else:
+                    os.kill(pid, 0)
+                    raise Exception(f"服务器已在运行中 (PID: {pid})")
+            except subprocess.CalledProcessError:
+                remove_pid()
+            except ProcessLookupError:
+                remove_pid()
+
+        # 判断是否是子进程
+        if len(sys.argv) > 1 and sys.argv[-1] == '--subprocess':
+            # 作为子进程运行时，直接启动服务器
+            setup_logging()  # 确保子进程也有正确的日志配置
+            server = DHCPServer(args.config)
+            write_pid()  # 写入实际运行服务的进程PID
+            server.start()
+            return True
+
+        # 主进程启动逻辑
+        current_script = os.path.abspath(sys.argv[0])
+
+        if os.name == 'nt':  # Windows系统
+            # 使用pythonw.exe
+            python_exe = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
+            if not os.path.exists(python_exe):
+                python_exe = os.path.join(os.path.dirname(sys.executable), '..', 'pythonw.exe')
+            if not os.path.exists(python_exe):
+                raise Exception("找不到 pythonw.exe")
+
+            # 创建启动信息对象
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+
+            # 使用 subprocess.CREATE_NO_WINDOW 和 subprocess.CREATE_NEW_PROCESS_GROUP
+            process = subprocess.Popen(
+                [python_exe, current_script, '-c', args.config, 'start', '--subprocess'],
+                startupinfo=startupinfo,
+                creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                stdin=subprocess.PIPE
+            )
+        else:  # Unix系统
+            process = subprocess.Popen(
+                [sys.executable, current_script, '-c', args.config, 'start', '--subprocess'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+
+        # 等待确认服务器已启动
+        time.sleep(2)
+
+        # 检查进程是否正常运行
+        if process.poll() is not None:
+            _, stderr = process.communicate()
+            error_msg = stderr.decode('utf-8', errors='ignore')
+            raise Exception(f"服务器启动失败: {error_msg}")
+
+        log_message("DHCP服务器已成功启动")
+        return True
+
     except Exception as e:
         log_message(f"启动服务器失败: {str(e)}", logging.ERROR)
         if os.path.exists(pid_file):
@@ -163,7 +264,7 @@ class DHCPPacket:
                     packed += struct.pack('!BB', opt_code, 4)
                     packed += socket.inet_aton(value)
                 elif isinstance(value, int):
-                    # 根据值的大小选择合适的打包格式
+                    # 根据值的大小择合适的打包格式
                     if value < 256:
                         packed += struct.pack('!BBB', opt_code, 1, value)
                     elif value < 65536:
@@ -188,7 +289,7 @@ class DHCPPacket:
         # 添加结束标记
         packed += bytes([255])
 
-        # 如果包长度小于最小要求，添加填充
+        # 如果长度小于最小要求，添加填充
         if len(packed) < 300:  # 使用更大最小长度以确保包含足够的数据
             packed = packed[:-1] + b'\x00' * (300 - len(packed)) + bytes([255])
 
@@ -306,7 +407,7 @@ class DHCPServer:
             self.existing_dhcp_server = proxy_config.get('existing_dhcp_server', '')
             self.proxy_timeout = proxy_config.get('proxy_timeout', 5)
 
-            # 初始化可用IP地址池
+            # 初始可用IP地址池
             self.available_ips = []
             if self.pool_start and self.pool_end:
                 try:
@@ -452,7 +553,7 @@ class DHCPServer:
                 'last_seen': current_time,
                 'first_seen': self.leases.get(mac, {}).get('first_seen', current_time),
                 'expire': current_time + self.lease_time,
-                'status': '在线'  # 设置初始状态为在线
+                'status': '在线'  # 设���初始状态为在线
             }
 
             # 更新租约
@@ -485,7 +586,7 @@ class DHCPServer:
             # 保存租约信息
             with open(self.leases_file, 'w', encoding='utf-8') as f:
                 json.dump(active_leases, f, indent=2, ensure_ascii=False)
-            log_message(f"已保存 {len(active_leases)} 个活动租约")
+            log_message(f"保存 {len(active_leases)} 个活动租约")
         except Exception as e:
             log_message(f"保存租约文件失败: {e}", logging.ERROR)
 
@@ -493,19 +594,47 @@ class DHCPServer:
         """清理过期租约"""
         try:
             current_time = time.time()
-            for mac, lease in self.leases.items():
-                # 更新状态
+            changed = False
+            for mac, lease in list(self.leases.items()):
                 if lease['expire'] < current_time:
+                    # 租约过期
                     lease['status'] = '离线'
-                elif current_time - lease['last_seen'] > 300:  # 5分钟没有响应
+                    changed = True
+                elif current_time - lease.get('last_seen', 0) > 300:  # 5分钟无活动
                     lease['status'] = '离线'
+                    changed = True
                 else:
-                    lease['status'] = '在线'
+                    # 使用 socket 检查设备是否在线，而不是使用 ping
+                    try:
+                        ip = lease['ip']
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock.settimeout(0.5)  # 设置超时时间为0.5秒
+                        result = sock.connect_ex((ip, 445))  # 尝试连接 SMB 端口
+                        sock.close()
 
-            # 保存更新后的状态
-            self.save_leases()
+                        if result == 0:  # 端口开放，设备可能在线
+                            lease['status'] = '在线'
+                            lease['last_seen'] = current_time
+                            changed = True
+                        else:
+                            # 尝试其他常用端口
+                            for port in [80, 7, 22]:
+                                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                                sock.settimeout(0.5)
+                                result = sock.connect_ex((ip, port))
+                                sock.close()
+                                if result == 0:
+                                    lease['status'] = '在线'
+                                    lease['last_seen'] = current_time
+                                    changed = True
+                                    break
+                    except:
+                        pass  # 忽略任何错误，继续处理下一个设备
+
+            if changed:
+                self.save_leases()
         except Exception as e:
-            log_message(f"清理过期租约失败: {e}", logging.ERROR)
+            logging.error(f"清理过期租约失败: {str(e)}")
 
     def get_boot_filename(self, client_arch, is_ipxe=False):
         """Get appropriate boot filename based on client architecture"""
@@ -586,7 +715,7 @@ class DHCPServer:
         response.xid = packet.xid
         response.secs = 0
         response.flags = 0x8000  # 强制使用广播
-        response.yiaddr = allocated_ip  # 分配的IP地址
+        response.yiaddr = allocated_ip  # 分配IP地址
         response.siaddr = self.server_ip  # 使用DHCP服务器IP
         response.giaddr = packet.giaddr
         response.chaddr = packet.chaddr
@@ -922,17 +1051,18 @@ class DHCPServer:
                             if msg_type == 3 and response.options[53][0] == 5:  # REQUEST + ACK
                                 self.update_lease_status(client_mac, '在线')
 
+                            # 使用 logging.debug 替代 log_message 来记录详细的响应信息
                             if msg_type == 1:
-                                log_message(f"已发送DHCP OFFER响应到客户端 {client_mac} (广播方式)")
+                                logging.debug(f"已发送DHCP OFFER响应到客户端 {client_mac} (广播方式)")
                             else:
                                 msg_type = 'ACK' if response.options[53][0] == 5 else 'NAK'
-                                log_message(f"已发送DHCP {msg_type}响应到客户端 {client_mac} (广播方式)")
+                                logging.debug(f"已发送DHCP {msg_type}响应到客户端 {client_mac} (广播方式)")
 
                 except Exception as e:
-                    log_message(f"发送DHCP响应失败: {str(e)}", logging.ERROR)
+                    logging.error(f"发送DHCP响应失败: {str(e)}")
 
         except Exception as e:
-            log_message(f"处理DHCP数据包时出错: {str(e)}", logging.ERROR)
+            logging.error(f"处理DHCP数据包时出错: {str(e)}")
 
     def update_lease_status(self, client_mac, status):
         """更新租约状态"""
@@ -959,20 +1089,37 @@ class DHCPServer:
                     lease['status'] = '离线'
                     changed = True
                 else:
-                    # 检查是否能ping通客户端
+                    # 使用 socket 检查设备是否在线，而不是使用 ping
                     try:
                         ip = lease['ip']
-                        if os.system(f"ping -n 1 -w 1000 {ip}" if os.name == 'nt' else f"ping -c 1 -W 1 {ip}") == 0:
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock.settimeout(0.5)  # 设置超时时间为0.5秒
+                        result = sock.connect_ex((ip, 445))  # 尝试连接 SMB 端口
+                        sock.close()
+
+                        if result == 0:  # 端口开放，设备可能在线
                             lease['status'] = '在线'
                             lease['last_seen'] = current_time
                             changed = True
+                        else:
+                            # 尝试其他常用端口
+                            for port in [80, 7, 22]:
+                                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                                sock.settimeout(0.5)
+                                result = sock.connect_ex((ip, port))
+                                sock.close()
+                                if result == 0:
+                                    lease['status'] = '在线'
+                                    lease['last_seen'] = current_time
+                                    changed = True
+                                    break
                     except:
-                        pass
+                        pass  # 忽略任何错误，继续处理下一个设备
 
             if changed:
                 self.save_leases()
         except Exception as e:
-            log_message(f"清理过期租约失败: {str(e)}", logging.ERROR)
+            logging.error(f"清理过期租约失败: {str(e)}")
 
     def start(self):
         """启动DHCP服务器"""
@@ -990,7 +1137,7 @@ class DHCPServer:
             # 启动服务器
             self.running = True
 
-            # 启动状���检查线程
+            # 启动状态检查线程
             self.status_check_thread = threading.Thread(target=self.check_client_status)
             self.status_check_thread.daemon = True
             self.status_check_thread.start()
@@ -1057,7 +1204,7 @@ class DHCPServer:
         response.ciaddr = packet.ciaddr
         response.chaddr = packet.chaddr
 
-        # 只返回配置信息，不分配IP
+        # 只返回配置信息不分配IP
         options = {
             53: bytes([5]),  # DHCP ACK
             1: self.subnet_mask,
@@ -1179,6 +1326,49 @@ class DHCPServer:
         return response
 
 if __name__ == '__main__':
+    # 设置日志
+    setup_logging()
+
+    # 在主程序开始时添加
+    if os.name == 'nt':
+        if 'pythonw.exe' in sys.executable:
+            # 创建新的文件流
+            log_file = open('dhcp_server.log', 'a', encoding='utf-8', buffering=1)
+
+            # 重定向标准输出和错误
+            sys.stdout = log_file
+            sys.stderr = log_file
+
+            # 注册退出��的清理函数
+            def cleanup():
+                try:
+                    if not log_file.closed:
+                        log_file.flush()
+                        log_file.close()
+                except:
+                    pass
+
+            import atexit
+            atexit.register(cleanup)
+        else:
+            # 如果不是通过 pythonw.exe 运行，尝试重启为 pythonw.exe
+            if '--subprocess' not in sys.argv:
+                python_exe = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
+                if not os.path.exists(python_exe):
+                    python_exe = os.path.join(os.path.dirname(sys.executable), '..', 'pythonw.exe')
+
+                if os.path.exists(python_exe):
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = subprocess.SW_HIDE
+
+                    subprocess.Popen(
+                        [python_exe] + sys.argv,
+                        startupinfo=startupinfo,
+                        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+                    )
+                    sys.exit(0)
+
     # 变量
     server = None
 
@@ -1210,7 +1400,7 @@ if __name__ == '__main__':
             sys.exit(1)
 
     def read_pid():
-        """读取PID文件"""
+        """读取PID件"""
         try:
             with open(pid_file, 'r') as f:
                 return int(f.read().strip())
@@ -1233,38 +1423,84 @@ if __name__ == '__main__':
         global server
         try:
             log_message("正在启动DHCP服务器...")
-            # ��查是否已经运行
+
+            # 检查是否已经运行
             pid = read_pid()
             if pid:
                 try:
                     if os.name == 'nt':
-                        kernel32 = ctypes.windll.kernel32
-                        handle = kernel32.OpenProcess(1, False, pid)
-                        if handle:
-                            kernel32.CloseHandle(handle)
+                        # 使用tasklist检查进程是否真实存在
+                        startupinfo = subprocess.STARTUPINFO()
+                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                        startupinfo.wShowWindow = subprocess.SW_HIDE
+                        output = subprocess.check_output(
+                            ['tasklist', '/FI', f'PID eq {pid}'],
+                            startupinfo=startupinfo,
+                            creationflags=subprocess.CREATE_NO_WINDOW
+                        )
+                        if str(pid) in output.decode():
                             raise Exception(f"服务器已在运行中 (PID: {pid})")
                     else:
                         os.kill(pid, 0)
                         raise Exception(f"服务器已在运行中 (PID: {pid})")
-                except (ProcessLookupError, OSError):
+                except subprocess.CalledProcessError:
+                    remove_pid()
+                except ProcessLookupError:
                     remove_pid()
 
-            # 检查端口是否被占用
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            try:
-                sock.bind(('0.0.0.0', 67))
-                sock.close()
-            except Exception as e:
-                raise Exception(f"端口 67 被占用: {str(e)}")
+            # 判断是否是子进程
+            if len(sys.argv) > 1 and sys.argv[-1] == '--subprocess':
+                # 作为子进程运行时，直接启动服务器
+                setup_logging()  # 确保子进程也有正确的日志配置
+                server = DHCPServer(args.config)
+                write_pid()  # 写入实际运行服务的进程PID
+                server.start()
+                return True
 
-            # 写入PID文件
-            write_pid()
+            # 主进程启动逻辑
+            current_script = os.path.abspath(sys.argv[0])
 
-            # 启动服务器
-            log_message("正在启动DHCP服务器...")
-            server = DHCPServer(args.config)
-            server.start()
+            if os.name == 'nt':  # Windows系统
+                # 使用pythonw.exe
+                python_exe = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
+                if not os.path.exists(python_exe):
+                    python_exe = os.path.join(os.path.dirname(sys.executable), '..', 'pythonw.exe')
+                if not os.path.exists(python_exe):
+                    raise Exception("找不到 pythonw.exe")
+
+                # 创建启动信息对象
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+
+                # 使用 subprocess.CREATE_NO_WINDOW 和 subprocess.CREATE_NEW_PROCESS_GROUP
+                process = subprocess.Popen(
+                    [python_exe, current_script, '-c', args.config, 'start', '--subprocess'],
+                    startupinfo=startupinfo,
+                    creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    stdin=subprocess.PIPE
+                )
+            else:  # Unix系统
+                process = subprocess.Popen(
+                    [sys.executable, current_script, '-c', args.config, 'start', '--subprocess'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+
+            # 等待确认服务器已启动
+            time.sleep(2)
+
+            # 检查进程是否正常运行
+            if process.poll() is not None:
+                _, stderr = process.communicate()
+                error_msg = stderr.decode('utf-8', errors='ignore')
+                raise Exception(f"服务器启动失败: {error_msg}")
+
+            log_message("DHCP服务器已成功启动")
             return True
+
         except Exception as e:
             log_message(f"启动服务器失败: {str(e)}", logging.ERROR)
             if os.path.exists(pid_file):
@@ -1287,7 +1523,7 @@ if __name__ == '__main__':
                     else:  # Unix系统
                         os.kill(pid, signal.SIGTERM)
 
-                    log_message(f"已发送停止信号到进程 {pid}")
+                    log_message(f"已发送停止号到进程 {pid}")
 
                     # 等待进程结束
                     max_wait = 10
@@ -1320,7 +1556,7 @@ if __name__ == '__main__':
                     log_message("DHCP服务器已停止")
                     return True
                 except (ProcessLookupError, OSError):
-                    log_message("进程已经停止")
+                    log_message("程已经停止")
                     remove_pid()
                     return True
                 except Exception as e:
@@ -1341,6 +1577,7 @@ if __name__ == '__main__':
                       help='Run as daemon (Unix-like systems only)')
     parser.add_argument('action', choices=['start', 'stop', 'restart'],
                       help='Action to perform: start, stop, or restart the server')
+    parser.add_argument('--subprocess', action='store_true', help=argparse.SUPPRESS)
 
     args = parser.parse_args()
 
