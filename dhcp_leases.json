@@ -1,42 +1,26 @@
 {
-  "a8:c9:8a:6e:3e:54": {
-    "ip": "192.168.1.101",
-    "hostname": "",
-    "bios_mode": "UEFI",
-    "boot_file": "",
-    "last_seen": 1734504506.4071028,
-    "first_seen": 1734496728.5491335,
-    "expire": 1734508106.4039078,
-    "status": "离线"
-  },
   "30:5f:77:72:8f:93": {
-    "ip": "192.168.1.102",
-    "hostname": "",
-    "bios_mode": "UEFI",
-    "boot_file": "",
-    "last_seen": 1734505168.8296492,
-    "first_seen": 1734496736.013551,
-    "expire": 1734508768.827655,
-    "status": "在线"
+    "ip": "192.168.1.101",
+    "expire": 1734510507,
+    "last_seen": 1734506907.7939126,
+    "first_seen": 1734506768,
+    "status": "在线",
+    "is_pxe": false,
+    "boot_type": "Legacy"
   },
   "44:1a:fa:8e:a0:4f": {
-    "ip": "192.168.1.103",
-    "hostname": "",
-    "bios_mode": "UEFI",
-    "boot_file": "",
-    "last_seen": 1734505155.5766978,
-    "first_seen": 1734496755.7358387,
-    "expire": 1734508755.5756989,
-    "status": "在线"
+    "ip": "192.168.1.102",
+    "expire": 1734510487,
+    "last_seen": 1734506887.5403678,
+    "first_seen": 1734506794,
+    "status": "在线",
+    "is_pxe": false,
+    "boot_type": "Legacy"
   },
   "18:65:71:fb:d5:7c": {
-    "ip": "192.168.1.104",
-    "hostname": "",
-    "bios_mode": "Legacy",
-    "boot_file": "",
-    "last_seen": 1734505134.9374237,
-    "first_seen": 1734496786.342895,
-    "expire": 1734508734.9354284,
-    "status": "在线"
-  }
-}
+    "ip": "192.168.1.103",
+    "expire": 1734510398,
+    "last_seen": 1734506798.75029,
+    "first_seen": 1734506798,
+    "status": "在线",
+    "is_pxe": 

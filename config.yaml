@@ -19,14 +19,14 @@ options:
 pxe:
   enabled: true
   tftp_server: "192.168.1.88"
-  default_boot_filename: "pxelinux.0"
+  default_boot_filename: "undionly.kpxe"
   architecture_specific:
-    - arch: 0  # BIOS/x86
-      boot_filename: "pxelinux.0"
+    - arch: 0  # BIOS
+      boot_filename: "undionly.kpxe"
     - arch: 7  # UEFI x64
       boot_filename: "snponly.efi"
     - arch: 9  # UEFI x86
-      boot_filename: "ipxe-ia32.efi"
+      boot_filename: "ipxe.efi"
   ipxe:
     enabled: true
     http_server: "http://192.168.1.1:8080"  # iPXE脚本HTTP服务器
