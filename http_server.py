@@ -25,6 +25,7 @@ import socket
 import ctypes
 import errno
 from iso_manager import ISOManager
+from tftp_server import TFTPServer
 
 # 全局变量
 server = None
@@ -189,6 +190,8 @@ class SecureHTTPServer:
         self.pid_file = self.get_pid_file_path()
         self.running = False
         self.start_time = None
+        self.tftp_server = TFTPServer()  # 创建 TFTP 服务器实例
+        self.tftp_pid_file = self.get_tftp_pid_file()  # 添加 TFTP PID 文件路径
 
     def load_config(self, config_file):
         """加载配置文件"""
@@ -507,6 +510,13 @@ class SecureHTTPServer:
             except Exception as e:
                 logging.error(f"Error shutting down server: {e}")
 
+        # 同时停止TFTP服务器
+        if hasattr(self, 'tftp_server'):
+            try:
+                self.tftp_server.stop()
+            except Exception as e:
+                logging.error(f"Error stopping TFTP server: {e}")
+
         # 清理PID文件
         try:
             if os.path.exists(self.pid_file):
@@ -516,6 +526,43 @@ class SecureHTTPServer:
             logging.error(f"Error removing PID file: {e}")
 
         self.running = False
+
+        # 停止 TFTP 服务器
+        try:
+            subprocess.run([sys.executable, 'tftp_server.py', 'stop'],
+                         stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE)
+        except Exception as e:
+            logging.error(f"Error stopping TFTP server: {e}")
+
+    def get_tftp_pid_file(self):
+        """获取 TFTP PID 文件路径"""
+        if os.name == 'nt':
+            pid_dir = os.path.join(tempfile.gettempdir(), 'tftp_server')
+            return os.path.join(pid_dir, 'tftp_server.pid')
+        else:
+            return '/var/run/tftp_server.pid' if os.geteuid() == 0 else \
+                   os.path.join(tempfile.gettempdir(), 'tftp_server.pid')
+
+    def check_tftp_running(self):
+        """检查 TFTP 服务器是否在运行"""
+        try:
+            if not os.path.exists(self.tftp_pid_file):
+                return False
+            with open(self.tftp_pid_file, 'r') as f:
+                pid = int(f.read().strip())
+            if os.name == 'nt':
+                kernel32 = ctypes.windll.kernel32
+                handle = kernel32.OpenProcess(1, False, pid)
+                if handle:
+                    kernel32.CloseHandle(handle)
+                    return True
+                return False
+            else:
+                os.kill(pid, 0)
+                return True
+        except:
+            return False
 
 def check_process_running(pid):
     """检查进程是否运行"""
@@ -556,7 +603,7 @@ def check_dhcp_server_running():
         with open(pid_file, 'r') as f:
             pid = int(f.read().strip())
 
-        # 检查进程是否存在
+        # 检查进��是否存在
         if os.name == 'nt':  # Windows
             import ctypes
             kernel32 = ctypes.windll.kernel32
@@ -746,6 +793,9 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                     self.handle_files()
                 elif path == '/api/dhcp/status':
                     self.handle_dhcp_status()
+                elif path == '/api/tftp/status':
+                    self.handle_tftp_status()
+                    return
                 elif path == '/api/config/dhcp':
                     self.send_file_content('config.yaml')
                 elif path == '/api/config/http':
@@ -884,6 +934,14 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             parsed_url = urlparse(self.path)
             path = parsed_url.path
 
+            # 处理TFTP服务器控制
+            if path.startswith('/api/tftp/'):
+                action = path.split('/')[-1]
+                if action in ['start', 'stop', 'restart']:
+                    result = self.control_tftp_server(action)
+                    self.send_json_response(result)
+                    return
+
             # 处理文件上传
             if path == '/iso/upload':
                 try:
@@ -991,8 +1049,6 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             if self.headers.get('Content-Type') != 'multipart/form-data':
                 content_length = int(self.headers.get('Content-Length', 0))
                 post_data = self.rfile.read(content_length).decode('utf-8')
-
-            # 处理其他 API 请求...
 
             # 处理DHCP服务器控制
             if path.startswith('/api/dhcp/'):
@@ -1420,7 +1476,7 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             # 检查DHCP服务器是否在运行
             is_running = check_dhcp_server_running()
 
-            # 如果进程不在运行但PID文件存在，清理PID文件
+            # 如果进程不在运行但PID文件存在，理PID文件
             if not is_running and pid_file_exists:
                 try:
                     os.remove('dhcp_server.pid')
@@ -1620,7 +1676,7 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                     self.send_error(500, f"Failed to delete file: {str(e)}")
                 return
 
-            # 处理设��删除
+            # 处理设备删除
             elif path.startswith('/api/devices/'):
                 mac = path.split('/')[-1]
                 self.handle_device_delete(mac)
@@ -1687,6 +1743,82 @@ class SecureHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             logging.error(f"Error getting bootfiles: {e}")
             self.send_error(500, str(e))
+
+    def handle_tftp_status(self):
+        """处理 TFTP 状态请求"""
+        try:
+            is_running = self.server_instance.check_tftp_running()
+            status = {
+                "status": "running" if is_running else "stopped",
+                "root_dir": "bootfile"
+            }
+            self.send_json_response(status)
+        except Exception as e:
+            logging.error(f"Error checking TFTP status: {e}")
+            self.send_json_response({
+                'status': 'unknown',
+                'error': str(e)
+            })
+
+    def control_tftp_server(self, action):
+        """控制 TFTP 服务器"""
+        try:
+            # 使用 pythonw.exe 在 Windows 上运行（避免命令窗口）
+            if os.name == 'nt':
+                python_cmd = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
+                if not os.path.exists(python_cmd):
+                    python_cmd = sys.executable
+
+                # 创建启动信息以隐藏窗口
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+            else:
+                python_cmd = sys.executable
+                startupinfo = None
+
+            # 运行命令
+            process = subprocess.run(
+                [python_cmd, 'tftp_server.py', action],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                startupinfo=startupinfo
+            )
+
+            # 检查执行结果
+            if process.returncode == 0:
+                # 等待状态更新
+                time.sleep(1)
+                is_running = self.server_instance.check_tftp_running()
+                return {
+                    'success': True,
+                    'message': f"TFTP服务器{self.get_action_name(action)}成功",
+                    'status': 'running' if is_running else 'stopped'
+                }
+            else:
+                error_msg = process.stderr.decode('utf-8', errors='ignore')
+                return {
+                    'success': False,
+                    'error': f"TFTP服务器{self.get_action_name(action)}失败: {error_msg}",
+                    'status': 'unknown'
+                }
+
+        except Exception as e:
+            logging.error(f"Error controlling TFTP server: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'status': 'unknown'
+            }
+
+    def get_action_name(self, action):
+        """获取操作的中文名称"""
+        names = {
+            'start': '启动',
+            'stop': '停止',
+            'restart': '重启'
+        }
+        return names.get(action, action)
 
 
 if __name__ == '__main__':

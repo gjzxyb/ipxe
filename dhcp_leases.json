@@ -4,17 +4,26 @@
     "hostname": null,
     "bios_mode": "UEFI",
     "boot_file": "",
-    "last_seen": 1734412327.5965295,
-    "first_seen": 1734411821.6035905,
-    "expire": 1734415927.5965295
+    "last_seen": 1734486841.9150367,
+    "first_seen": 1734486518.9205883,
+    "expire": 1734490441.9150367
   },
   "30:5f:77:72:8f:93": {
-    "ip": "192.168.1.104",
+    "ip": "192.168.1.101",
     "hostname": null,
     "bios_mode": "UEFI",
     "boot_file": "",
-    "last_seen": 1734412270.4622617,
-    "first_seen": 1734411873.4661934,
-    "expire": 1734415870.4622617
+    "last_seen": 1734486842.2312632,
+    "first_seen": 1734486519.238401,
+    "expire": 1734490442.2312632
+  },
+  "a8:c9:8a:6e:3e:54": {
+    "ip": "192.168.1.102",
+    "hostname": null,
+    "bios_mode": "UEFI",
+    "boot_file": "",
+    "last_seen": 1734486845.720452,
+    "first_seen": 1734486806.7209666,
+    "expire": 1734490445.720452
   }
 }

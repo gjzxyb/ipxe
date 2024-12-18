@@ -318,16 +318,40 @@ class DHCPServer:
         except ValueError as e:
             raise ValueError(f"Error creating IP pool: {e}")
 
-    def get_boot_filename(self, client_arch):
+        # 加载iPXE配置
+        if self.pxe_enabled:
+            pxe_config = config['pxe']
+            self.ipxe_enabled = pxe_config.get('ipxe', {}).get('enabled', False)
+            if self.ipxe_enabled:
+                self.ipxe_http_server = pxe_config['ipxe']['http_server']
+                self.ipxe_boot_script = pxe_config['ipxe']['boot_script']
+
+    def get_boot_filename(self, client_arch, is_ipxe=False):
         """Get appropriate boot filename based on client architecture"""
         if not self.pxe_enabled:
             return None
 
-        # Convert client_arch to string for dictionary lookup
-        arch_str = str(int.from_bytes(client_arch, byteorder='big') if isinstance(client_arch, bytes) else client_arch)
+        try:
+            # 转换客户端架构为整数
+            arch = int.from_bytes(client_arch, byteorder='big') if isinstance(client_arch, bytes) else client_arch
 
-        # Return architecture-specific boot filename or default
-        return self.arch_specific_boot.get(arch_str, self.default_boot_filename)
+            # 如果是iPXE请求，返回iPXE脚本URL
+            if is_ipxe and self.ipxe_enabled:
+                return f"{self.ipxe_http_server}/{self.ipxe_boot_script}"
+
+            # 否则返回相应的iPXE引导文件
+            if arch in [0x0000, 0x0006]:  # BIOS/x86
+                return self.arch_specific_boot.get('0', 'undionly.kpxe')
+            elif arch in [0x0007]:  # UEFI x64
+                return self.arch_specific_boot.get('7', 'ipxe.efi')
+            elif arch in [0x0009]:  # UEFI x86
+                return self.arch_specific_boot.get('9', 'ipxe-ia32.efi')
+            else:
+                return self.default_boot_filename
+
+        except Exception as e:
+            logging.error(f"Error determining boot filename: {e}")
+            return self.default_boot_filename
 
     def get_interface_info(self):
         """Get interface information"""
@@ -399,21 +423,37 @@ class DHCPServer:
             28: self.broadcast  # Broadcast Address
         }
 
-        # 如果是PXE请求，添加PXE相关选项
+        # 修改PXE相关选项的处理
         if self.pxe_enabled and self.is_pxe_request(packet):
             client_arch = None
             if 93 in packet.options:  # Client System Architecture
                 client_arch = packet.options[93]
+                logging.info(f"Client architecture: {int.from_bytes(client_arch, byteorder='big')}")
 
-            boot_file = self.get_boot_filename(client_arch)
+            # 检查是否是iPXE客户端
+            is_ipxe = self.is_ipxe_client(packet)
+            boot_file = self.get_boot_filename(client_arch, is_ipxe)
+
             if boot_file:
-                options.update({
-                    66: self.tftp_server,  # TFTP server name
-                    67: boot_file.encode('ascii'),  # Bootfile name
-                    60: b'PXEClient',  # Class identifier
-                    97: packet.options.get(97, b'')  # Client UUID if present
-                })
-                response.siaddr = self.tftp_server
+                if is_ipxe and self.ipxe_enabled:
+                    # 对于iPXE客户端，使用HTTP URL
+                    response.file = b'\x00' * 128  # 清空文件名字段
+                    options.update({
+                        67: boot_file.encode('ascii'),  # 使用HTTP URL作为引导文件
+                    })
+                    logging.info(f"iPXE boot configuration: Script URL={boot_file}")
+                else:
+                    # 对于初始PXE客户端，使用TFTP
+                    response.siaddr = self.tftp_server
+                    response.file = boot_file.encode('ascii') + b'\x00' * (128 - len(boot_file))
+                    options.update({
+                        66: self.tftp_server,  # TFTP server name
+                        67: boot_file.encode('ascii'),  # Bootfile name
+                        60: b'PXEClient',  # Class identifier
+                        97: packet.options.get(97, b''),  # Client UUID if present
+                        43: b'\x06\x01\x00\x10\x94\x00'  # PXE vendor-specific information
+                    })
+                    logging.info(f"PXE boot configuration: TFTP={self.tftp_server}, File={boot_file}")
 
         response.options = options
         return response
@@ -480,22 +520,29 @@ class DHCPServer:
                 28: self.broadcast
             }
 
-            # 如果是PXE请求，添加PXE相关选项
-            boot_file = None
+            # 修改PXE相关选项的处理
             if self.pxe_enabled and self.is_pxe_request(packet):
                 client_arch = None
                 if 93 in packet.options:
                     client_arch = packet.options[93]
+                    logging.info(f"Client architecture: {int.from_bytes(client_arch, byteorder='big')}")
 
                 boot_file = self.get_boot_filename(client_arch)
                 if boot_file:
-                    options.update({
-                        66: self.tftp_server,
-                        67: boot_file.encode('ascii'),
-                        60: b'PXEClient',
-                        97: packet.options.get(97, b'')
-                    })
+                    # 设置引导服务器IP为TFTP服务器IP
                     response.siaddr = self.tftp_server
+                    # 设置引导文件名
+                    response.file = boot_file.encode('ascii') + b'\x00' * (128 - len(boot_file))
+
+                    options.update({
+                        66: self.tftp_server,  # TFTP server name
+                        67: boot_file.encode('ascii'),  # Bootfile name
+                        60: b'PXEClient',  # Class identifier
+                        97: packet.options.get(97, b''),  # Client UUID if present
+                        # 添加更多PXE相关选项
+                        43: b'\x06\x01\x00\x10\x94\x00'  # PXE vendor-specific information
+                    })
+                    logging.info(f"PXE boot configuration: TFTP={self.tftp_server}, File={boot_file}")
 
             response.options = options
 
@@ -981,6 +1028,16 @@ class DHCPServer:
             logging.info(f"更新租约: {mac} -> {ip} ({bios_mode})")
         except Exception as e:
             logging.error(f"更新租约失败: {e}")
+
+    def is_ipxe_client(self, packet):
+        """检查是否是iPXE客户端"""
+        if 60 in packet.options:  # 检查用户类别选项
+            try:
+                user_class = packet.options[60].decode('ascii', errors='ignore')
+                return 'iPXE' in user_class
+            except:
+                pass
+        return False
 
 if __name__ == '__main__':
     # 局变量

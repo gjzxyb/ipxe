@@ -883,31 +883,6 @@
         </header>
 
         <div class="server-controls">
-            <!-- DHCP服务器卡片 -->
-            <div class="server-card">
-                <div class="server-header">
-                    <div class="server-title">
-                        <span>🌐</span>
-                        DHCP服务器
-                    </div>
-                    <div id="dhcp-status" class="server-status status-stopped">
-                        <span>⚪</span>
-                        检查中...
-                    </div>
-                </div>
-                <div class="server-actions">
-                    <button id="dhcp-start" class="btn btn-primary" onclick="controlDHCPServer('start')">
-                        <span>▶️</span>启动
-                    </button>
-                    <button id="dhcp-stop" class="btn btn-danger" onclick="controlDHCPServer('stop')">
-                        <span>⏹️</span>停止
-                    </button>
-                    <button id="dhcp-restart" class="btn btn-secondary" onclick="controlDHCPServer('restart')">
-                        <span>🔄</span>重启
-                    </button>
-                </div>
-            </div>
-
             <!-- HTTP服务器卡片 -->
             <div class="server-card">
                 <div class="server-header">
@@ -928,6 +903,56 @@
                         <span>⏹️</span>停止
                     </button>
                     <button id="http-restart" class="btn btn-secondary" onclick="controlHTTPServer('restart')">
+                        <span>🔄</span>重启
+                    </button>
+                </div>
+            </div>
+
+            <!-- TFTP服务器卡片 -->
+            <div class="server-card">
+                <div class="server-header">
+                    <div class="server-title">
+                        <span>📡</span>
+                        TFTP服务器
+                    </div>
+                    <div id="tftp-status" class="server-status status-stopped">
+                        <span>⚪</span>
+                        检查中...
+                    </div>
+                </div>
+                <div class="server-actions">
+                    <button id="tftp-start" class="btn btn-primary" onclick="controlTFTPServer('start')">
+                        <span>▶️</span>启动
+                    </button>
+                    <button id="tftp-stop" class="btn btn-danger" onclick="controlTFTPServer('stop')">
+                        <span>⏹️</span>停止
+                    </button>
+                    <button id="tftp-restart" class="btn btn-secondary" onclick="controlTFTPServer('restart')">
+                        <span>🔄</span>重启
+                    </button>
+                </div>
+            </div>
+
+            <!-- DHCP服务器卡片 -->
+            <div class="server-card">
+                <div class="server-header">
+                    <div class="server-title">
+                        <span>🌐</span>
+                        DHCP服务器
+                    </div>
+                    <div id="dhcp-status" class="server-status status-stopped">
+                        <span>⚪</span>
+                        检查中...
+                    </div>
+                </div>
+                <div class="server-actions">
+                    <button id="dhcp-start" class="btn btn-primary" onclick="controlDHCPServer('start')">
+                        <span>▶️</span>启动
+                    </button>
+                    <button id="dhcp-stop" class="btn btn-danger" onclick="controlDHCPServer('stop')">
+                        <span>⏹️</span>停止
+                    </button>
+                    <button id="dhcp-restart" class="btn btn-secondary" onclick="controlDHCPServer('restart')">
                         <span>🔄</span>重启
                     </button>
                 </div>
@@ -1060,7 +1085,7 @@
             }
         }
 
-        // 切换配置文件
+        // 换配置文件
         function switchConfig(type) {
             currentConfig = type;
             // 更新标签状态
@@ -1232,7 +1257,7 @@
                     ${isRunning ? '运行中' : '已停止'}
                 `;
 
-                // 更新按��状态
+                // 更新按钮状态
                 document.getElementById('dhcp-start').disabled = isRunning;
                 document.getElementById('dhcp-stop').disabled = !isRunning;
                 document.getElementById('dhcp-restart').disabled = !isRunning;
@@ -1347,7 +1372,7 @@
                 `;
 
                 if (action === 'stop') {
-                    // 停止操作的特殊处理
+                    // 停止操作的��殊处理
                     try {
                         // 发送停止命令
                         await fetch('/api/http/stop', {
@@ -1361,7 +1386,7 @@
                         // 忽略任何错误，继续检查状态
                     }
 
-                    // 等待服务器停止
+                    // 等待服务停止
                     let maxAttempts = 10;
                     let attempts = 0;
                     let stopped = false;
@@ -1530,7 +1555,154 @@
             }, 3000);
         }
 
-        // 页面加载完成后执行
+        // 更新TFTP服务器状态
+        async function updateTFTPStatus() {
+            const statusElement = document.getElementById('tftp-status');
+            try {
+                const response = await fetch('/api/tftp/status', {
+                    headers: {
+                        'Cache-Control': 'no-cache',
+                        'Pragma': 'no-cache'
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                const isRunning = data.status === 'running';
+
+                // 更新状态显示
+                statusElement.className = `server-status ${isRunning ? 'status-running' : 'status-stopped'}`;
+                statusElement.innerHTML = `
+                    <span>${isRunning ? '🟢' : '🔴'}</span>
+                    ${isRunning ? '运行中' : '已停止'}
+                `;
+
+                // 更新按钮状态
+                document.getElementById('tftp-start').disabled = isRunning;
+                document.getElementById('tftp-stop').disabled = !isRunning;
+                document.getElementById('tftp-restart').disabled = !isRunning;
+            } catch (error) {
+                console.error('获取TFTP状态失败:', error);
+                // 当发生错误时，假定服务器已停止
+                statusElement.className = 'server-status status-stopped';
+                statusElement.innerHTML = `
+                    <span>🔴</span>
+                    已停止
+                `;
+
+                // 更新按钮状态为可启动
+                document.getElementById('tftp-start').disabled = false;
+                document.getElementById('tftp-stop').disabled = true;
+                document.getElementById('tftp-restart').disabled = true;
+            }
+        }
+
+        // 控制TFTP服务器
+        async function controlTFTPServer(action) {
+            const button = document.querySelector(`#tftp-${action}`);
+            button.disabled = true;
+            const statusElement = document.getElementById('tftp-status');
+
+            try {
+                // 更新UI状态为处理中
+                statusElement.className = 'server-status';
+                statusElement.innerHTML = `
+                    <span>🔄</span>
+                    ${action === 'restart' ? '重启中' : (action === 'start' ? '启动中' : '停止中')}...
+                `;
+
+                // 发送控制命令
+                const response = await fetch(`/api/tftp/${action}`, {
+                    method: 'POST',
+                    headers: {
+                        'Cache-Control': 'no-cache',
+                        'Pragma': 'no-cache'
+                    }
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(errorText);
+                }
+
+                // 立即更新一次状态
+                await updateTFTPStatus();
+
+                // 等待服务器状态变化
+                let attempts = 0;
+                const maxAttempts = 15;
+                const checkInterval = 500; // 减少检查间隔到500ms
+                let success = false;
+
+                while (attempts < maxAttempts && !success) {
+                    await new Promise(resolve => setTimeout(resolve, checkInterval));
+
+                    try {
+                        const statusResponse = await fetch('/api/tftp/status', {
+                            headers: {
+                                'Cache-Control': 'no-cache',
+                                'Pragma': 'no-cache'
+                            }
+                        });
+
+                        if (statusResponse.ok) {
+                            const statusData = await statusResponse.json();
+                            const currentStatus = statusData.status;
+
+                            // 立即更新UI状态
+                            const isRunning = currentStatus === 'running';
+                            statusElement.className = `server-status ${isRunning ? 'status-running' : 'status-stopped'}`;
+                            statusElement.innerHTML = `
+                                <span>${isRunning ? '🟢' : '🔴'}</span>
+                                ${isRunning ? '运行中' : '已停止'}
+                            `;
+
+                            // 更新按钮状态
+                            document.getElementById('tftp-start').disabled = isRunning;
+                            document.getElementById('tftp-stop').disabled = !isRunning;
+                            document.getElementById('tftp-restart').disabled = !isRunning;
+
+                            if (action === 'stop' && currentStatus !== 'running') {
+                                success = true;
+                                showNotification('TFTP服务器已停止', 'success');
+                                break;
+                            } else if (action === 'start' && currentStatus === 'running') {
+                                success = true;
+                                showNotification('TFTP服务器已启动', 'success');
+                                break;
+                            } else if (action === 'restart' && currentStatus === 'running') {
+                                success = true;
+                                showNotification('TFTP服务器已重启', 'success');
+                                break;
+                            }
+                        }
+                    } catch (error) {
+                        console.log(`状态检查尝试 ${attempts + 1}/${maxAttempts}`);
+                    }
+                    attempts++;
+                }
+
+                if (!success) {
+                    throw new Error(`TFTP服务器${getActionName(action)}超时，请检查服务器状态`);
+                }
+            } catch (error) {
+                console.error(`TFTP服务器${getActionName(action)}失败:`, error);
+                showNotification(`TFTP服务器${getActionName(action)}失败: ${error.message}`, 'error');
+            } finally {
+                button.disabled = false;
+                // 最终更新状态显示
+                await updateTFTPStatus();
+                // 启动定期状态检查
+                if (!statusCheckInterval) {
+                    statusCheckInterval = setInterval(checkStatus, 10000);
+                }
+            }
+        }
+
+        // 在页面加载完成后的事件监听器中添加TFTP状态更新
         document.addEventListener('DOMContentLoaded', () => {
             loadConfig('ipxe');
             loadConfig('dhcp');
@@ -1538,6 +1710,7 @@
             loadIPXEConfig();
             updateDHCPStatus();
             updateHTTPStatus();
+            updateTFTPStatus();
 
             let statusCheckInterval;
             let consecutiveErrors = 0;
@@ -1547,8 +1720,9 @@
             const checkStatus = async () => {
                 try {
                     await updateHTTPStatus();
+                    await updateTFTPStatus();  // 取消注释，恢复TFTP状态更新
                     await updateDHCPStatus();
-                    consecutiveErrors = 0;  // 重置错误计数
+                    consecutiveErrors = 0;
                 } catch (error) {
                     consecutiveErrors++;
                     console.error('状态检查失败:', error);
@@ -1557,7 +1731,7 @@
                     if (consecutiveErrors >= maxConsecutiveErrors) {
                         clearInterval(statusCheckInterval);
                         statusCheckInterval = setInterval(checkStatus, 30000);  // 切换到30秒间隔
-                        console.log('检测到多次连失败，已切换到低频率检查模式');
+                        console.log('检测到多次连接失败，已切换到低频率检查模式');
                     }
                 }
             };
@@ -1683,7 +1857,7 @@
                         <div class="image-actions">
                             ${mappingInfo ? `
                                 <button class="btn btn-secondary btn-sm" onclick="viewISODetails('${fileName}')">
-                                    <span>📋</span>详情
+                                    <span>查看</span>详情
                                 </button>
                             ` : `
                                 <button class="btn btn-primary btn-sm" onclick="processISO('${fileName}')">
@@ -1833,12 +2007,12 @@
 
                 // 更新select选项
                 const efiSelect = document.getElementById('efi-file');
-                if (bootfilesData.files.length > 0) {
+                if (bootfilesData.files && bootfilesData.files.length > 0) {
                     efiSelect.innerHTML = bootfilesData.files
                         .map(file => `<option value="${file}">${file}</option>`)
                         .join('');
                 } else {
-                    // 如果没有找到文件，显示默认选项
+                    // 如果没有加载到文件，显示默认选项
                     efiSelect.innerHTML = `
                         <option value="snponlyx64.efi">snponlyx64.efi</option>
                         <option value="snponlyx86.efi">snponlyx86.efi</option>
@@ -1847,19 +2021,27 @@
                 }
 
                 // 加载当前配置
-                const response = await fetch('/api/config/ipxe');
-                const config = await response.json();
+                const configResponse = await fetch('/api/config/ipxe');
+                const contentType = configResponse.headers.get("content-type");
+                let config;
+
+                if (contentType && contentType.includes("application/json")) {
+                    config = await configResponse.json();
+                } else {
+                    // 如果不是JSON响应，使用默认配置
+                    config = { boot_filename: "ipxe.efi" };
+                }
 
                 // 如果配置中有boot_filename，设置对应的值
                 if (config.boot_filename && bootfilesData.files.includes(config.boot_filename)) {
                     efiSelect.value = config.boot_filename;
-                } else if (bootfilesData.files.length > 0) {
+                } else if (bootfilesData.files && bootfilesData.files.length > 0) {
                     // 如果没有配置值，使用第一个文件作为默认值
                     efiSelect.value = bootfilesData.files[0];
                 }
             } catch (error) {
                 console.error('加载iPXE配置失败:', error);
-                showNotification('加载iPXE配置失败', 'error');
+                showNotification('加载iPXE配置失败: ' + error.message, 'error');
             }
         }
 

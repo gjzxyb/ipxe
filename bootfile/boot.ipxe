@@ -1,0 +1,64 @@
+#!ipxe
+
+# 显示一些信息
+echo iPXE boot script starting...
+echo
+
+# 设置超时
+set timeout 5000
+
+# 配置网络（如果需要）
+# dhcp
+
+# 设置引导菜单
+menu iPXE Boot Menu
+item --gap -- ------------------------- Operating Systems -------------------------
+item local     Boot from local disk
+item ubuntu    Install Ubuntu
+item centos    Install CentOS
+item --gap -- ---------------------- Advanced options ---------------------------
+item shell     iPXE shell
+item reboot    Reboot
+item exit      Exit
+
+# 选择默认选项
+choose --timeout ${timeout} --default local target && goto ${target}
+
+# 本地引导
+:local
+sanboot --no-describe --drive 0x80
+goto exit
+
+# Ubuntu安装
+:ubuntu
+echo Starting Ubuntu installation...
+kernel http://192.168.1.1:8080/ubuntu/vmlinuz
+initrd http://192.168.1.1:8080/ubuntu/initrd
+imgargs vmlinuz initrd=initrd root=/dev/ram0 url=http://192.168.1.1:8080/ubuntu/preseed.cfg
+boot
+
+# CentOS安装
+:centos
+echo Starting CentOS installation...
+kernel http://192.168.1.1:8080/centos/vmlinuz
+initrd http://192.168.1.1:8080/centos/initrd.img
+imgargs vmlinuz initrd=initrd.img inst.repo=http://192.168.1.1:8080/centos
+boot
+
+# Shell
+:shell
+shell
+
+# 重启
+:reboot
+reboot
+
+# 退出
+:exit
+exit
+
+# 失败处理
+:failed
+echo Boot failed
+prompt Press any key to continue
+goto start
