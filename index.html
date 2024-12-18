@@ -887,7 +887,7 @@
             <div class="server-card">
                 <div class="server-header">
                     <div class="server-title">
-                        <span>🌍</span>
+                        <span>����</span>
                         HTTP服务器
                     </div>
                     <div id="http-status" class="server-status status-stopped">
@@ -1914,6 +1914,8 @@
 
                 // 添加设备列表
                 devices.forEach(device => {
+                    const isOnline = device.status === '在线';
+
                     const deviceElement = document.createElement('div');
                     deviceElement.className = 'device-item';
                     deviceElement.innerHTML = `
@@ -1921,8 +1923,8 @@
                         <span>${device.ip || '-'}</span>
                         <span class="device-bios">${device.bios_mode || 'Unknown'}</span>
                         <span>${device.boot_file || '-'}</span>
-                        <div class="device-status ${device.online ? 'online' : 'offline'}">
-                            ${device.online ? '在线' : '离线'}
+                        <div class="device-status ${isOnline ? 'online' : 'offline'}">
+                            ${device.status || (isOnline ? '在线' : '离线')}
                         </div>
                         <div class="device-actions">
                             <button class="btn btn-secondary btn-sm" onclick="editDevice('${device.mac}')">
@@ -1936,7 +1938,8 @@
                     deviceList.appendChild(deviceElement);
                 });
             } catch (error) {
-                showNotification('加载设备列表失败', 'error');
+                console.error('加载设备列表失败:', error);
+                showNotification('加载设备列表失败: ' + error.message, 'error');
             }
         }
 
@@ -2005,7 +2008,7 @@
                 const bootfilesResponse = await fetch('/api/bootfiles');
                 const bootfilesData = await bootfilesResponse.json();
 
-                // 更新select选项
+                // 更��select选项
                 const efiSelect = document.getElementById('efi-file');
                 if (bootfilesData.files && bootfilesData.files.length > 0) {
                     efiSelect.innerHTML = bootfilesData.files
@@ -2132,23 +2135,34 @@
             const deviceList = document.querySelector('.device-list');
             if (!deviceList) return;
 
-            deviceList.innerHTML = devices.map(device => `
-                <tr>
-                    <td>${device.mac}</td>
-                    <td>${device.ip}</td>
-                    <td>${device.bios_mode || 'Unknown'}</td>
-                    <td>${device.boot_file || '-'}</td>
-                    <td><span class="status-${device.status === '在线' ? 'online' : 'offline'}">${device.status}</span></td>
-                    <td>
-                        <button class="btn btn-sm btn-edit" onclick="editDevice('${device.mac}')">
+            const header = deviceList.querySelector('.device-list-header');
+            deviceList.innerHTML = '';
+            deviceList.appendChild(header);
+
+            devices.forEach(device => {
+                const isOnline = device.status === '在线';
+
+                const deviceElement = document.createElement('div');
+                deviceElement.className = 'device-item';
+                deviceElement.innerHTML = `
+                    <span class="device-mac">${device.mac}</span>
+                    <span>${device.ip || '-'}</span>
+                    <span class="device-bios">${device.bios_mode || 'Unknown'}</span>
+                    <span>${device.boot_file || '-'}</span>
+                    <div class="device-status ${isOnline ? 'online' : 'offline'}">
+                        ${device.status || (isOnline ? '在线' : '离线')}
+                    </div>
+                    <div class="device-actions">
+                        <button class="btn btn-secondary btn-sm" onclick="editDevice('${device.mac}')">
                             <span>📝</span>编辑
                         </button>
-                        <button class="btn btn-sm btn-delete" onclick="deleteDevice('${device.mac}')">
+                        <button class="btn btn-danger btn-sm" onclick="deleteDevice('${device.mac}')">
                             <span>🗑️</span>删除
                         </button>
-                    </td>
-                </tr>
-            `).join('');
+                    </div>
+                `;
+                deviceList.appendChild(deviceElement);
+            });
         }
     </script>
 </body>
