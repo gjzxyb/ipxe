@@ -12,6 +12,7 @@ import tempfile
 import time
 import ctypes
 import tftpy
+import select
 
 # 配置日志
 logging.basicConfig(
@@ -45,11 +46,18 @@ class TFTPServer:
     def __init__(self, root_dir='bootfile'):
         self.server = None
         self.server_thread = None
-        self.root_dir = root_dir
+        self.root_dir = os.path.abspath(root_dir)
         self.running = False
         self.lock = threading.Lock()
+        self.sock = None
+
         # 确保 bootfile 目录存在
-        os.makedirs(root_dir, exist_ok=True)
+        try:
+            os.makedirs(self.root_dir, exist_ok=True)
+            logging.info(f"TFTP根目录: {self.root_dir}")
+        except Exception as e:
+            logging.error(f"创建TFTP根目录失败: {str(e)}")
+            raise
 
     def start(self):
         """启动 TFTP 服务器"""
@@ -60,35 +68,147 @@ class TFTPServer:
                     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                     try:
                         sock.bind(('0.0.0.0', 69))
+                    except socket.error as e:
+                        return False, f"TFTP端口(69)被占用: {str(e)}"
+                    finally:
                         sock.close()
-                    except socket.error:
-                        return False, "端口 69 已被占用"
 
-                    self.server = tftpy.TftpServer(self.root_dir)
-                    self.server_thread = threading.Thread(target=self.server.listen, args=('0.0.0.0', 69))
+                    # 保存套接字并设置为非阻塞模式
+                    self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    self.sock.bind(('0.0.0.0', 69))
+                    self.sock.setblocking(False)
+                    self.running = True
+
+                    # 启动服务线程
+                    self.server_thread = threading.Thread(target=self._serve)
                     self.server_thread.daemon = True
                     self.server_thread.start()
-                    self.running = True
+
                     logging.info("TFTP服务器启动成功")
                     return True, "TFTP服务器启动成功"
                 except Exception as e:
+                    if self.sock:
+                        self.sock.close()
                     logging.error(f"TFTP服务器启动失败: {e}")
                     return False, f"TFTP服务器启动失败: {str(e)}"
             return False, "TFTP服务器已在运行"
 
+    def _serve(self):
+        """TFTP服务器主循环"""
+        while self.running:
+            try:
+                readable, _, _ = select.select([self.sock], [], [], 1.0)
+                if not readable:
+                    continue
+
+                data, addr = self.sock.recvfrom(516)
+                if len(data) < 4:
+                    continue
+
+                opcode = struct.unpack('!H', data[:2])[0]
+                if opcode == 1:  # RRQ
+                    threading.Thread(target=self._handle_rrq, args=(data[2:], addr)).start()
+                elif opcode == 2:  # WRQ
+                    self._send_error(addr, 2, "Write operations not permitted")
+
+            except Exception as e:
+                if self.running:
+                    logging.error(f"TFTP服务器错误: {e}")
+
+    def _handle_rrq(self, data, addr):
+        """处理读请求"""
+        try:
+            # 解析文件名和模式
+            parts = data.split(b'\x00')
+            if len(parts) < 2:
+                self._send_error(addr, 0, "Invalid request")
+                return
+
+            filename = parts[0].decode('utf-8')
+            mode = parts[1].decode('utf-8').lower()
+
+            # 检查模式
+            if mode not in ['netascii', 'octet']:
+                self._send_error(addr, 0, "Unknown transfer mode")
+                return
+
+            # 构建完整文件路径
+            filepath = os.path.join(self.root_dir, filename)
+            filepath = os.path.normpath(filepath)
+
+            # 安全检查
+            if not filepath.startswith(self.root_dir):
+                self._send_error(addr, 2, "Access violation")
+                return
+
+            if not os.path.exists(filepath):
+                self._send_error(addr, 1, "File not found")
+                return
+
+            # 发送文件
+            self._send_file(filepath, addr)
+
+        except Exception as e:
+            logging.error(f"处理读请求失败: {e}")
+            self._send_error(addr, 0, str(e))
+
+    def _send_file(self, filepath, addr):
+        """发送文件"""
+        try:
+            with open(filepath, 'rb') as f:
+                block_number = 1
+                while True:
+                    data = f.read(512)
+                    packet = struct.pack('!HH', 3, block_number) + data
+
+                    # 创建新的套接字发送数据
+                    send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    send_sock.settimeout(5)
+
+                    try:
+                        send_sock.sendto(packet, addr)
+                        ack_data, _ = send_sock.recvfrom(4)
+                        ack_opcode, ack_block = struct.unpack('!HH', ack_data)
+
+                        if ack_opcode != 4 or ack_block != block_number:
+                            raise Exception("Invalid ACK")
+
+                        block_number += 1
+
+                        if len(data) < 512:
+                            break
+                    finally:
+                        send_sock.close()
+
+            logging.info(f"文件 {os.path.basename(filepath)} 传输完成")
+
+        except Exception as e:
+            logging.error(f"发送文件失败: {e}")
+            self._send_error(addr, 0, str(e))
+
+    def _send_error(self, addr, error_code, error_msg):
+        """发送错误消息"""
+        try:
+            error_packet = struct.pack('!HH', 5, error_code) + error_msg.encode('utf-8') + b'\x00'
+            send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                send_sock.sendto(error_packet, addr)
+            finally:
+                send_sock.close()
+            logging.error(f"TFTP错误: {error_code} - {error_msg}")
+        except Exception as e:
+            logging.error(f"发送错误消息失败: {e}")
+
     def stop(self):
-        """停止 TFTP 服务器"""
+        """停止TFTP服务器"""
         with self.lock:
             if self.running:
-                try:
-                    if self.server:
-                        self.server.stop()
-                    if self.server_thread:
-                        self.server_thread.join(timeout=5)
-                    self.running = False
-                    return True, "TFTP服务器停止成功"
-                except Exception as e:
-                    return False, f"TFTP服务器停止失败: {str(e)}"
+                self.running = False
+                if self.sock:
+                    self.sock.close()
+                if self.server_thread:
+                    self.server_thread.join(timeout=5)
+                return True, "TFTP服务器停止成功"
             return False, "TFTP服务器未在运行"
 
     def restart(self):
