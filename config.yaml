@@ -16,12 +16,12 @@ options:
     - "8.8.4.4"
   domain_name: "local"
   next_server: "192.168.1.88"  # TFTP服务器地址
-  filename: "undionly.kpxe"    # 修改为BIOS默认启动文件
+  filename: "undionly.kpxe"
 
 pxe:
   enabled: true
   tftp_server: "192.168.1.88"
-  default_boot_filename: "undionly.kpxe"  # 修改为BIOS默认启动文件
+  default_boot_filename: "undionly.kpxe"
   architecture_specific:
     - arch: 0  # BIOS
       boot_filename: "undionly.kpxe"
