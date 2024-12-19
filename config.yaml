@@ -15,39 +15,32 @@ options:
     - "8.8.8.8"
     - "8.8.4.4"
   domain_name: "local"
+  next_server: "192.168.1.88"  # 添加next-server选项
+  vendor_specific_information: ""  # 添加vendor特定信息
 
 pxe:
   enabled: true
   tftp_server: "192.168.1.88"
-  default_boot_filename: "undionly.kpxe"
+  default_boot_filename: "snponly.efi"
   architecture_specific:
     - arch: 0  # BIOS
       boot_filename: "undionly.kpxe"
+    - arch: 6  # EFI IA32
+      boot_filename: "ipxe-ia32.efi"
     - arch: 7  # UEFI x64
       boot_filename: "snponly.efi"
-    - arch: 9  # UEFI x86
+    - arch: 9  # EFI x86
       boot_filename: "ipxe.efi"
   ipxe:
     enabled: true
-    http_server: "http://192.168.1.1:8080"  # iPXE脚本HTTP服务器
-    boot_script: "boot.ipxe"  # iPXE引导脚本名称
+    http_server: "http://192.168.1.88:8080"  # 修改为与TFTP服务器相同的IP
+    boot_script: "boot.ipxe"
 
-
-
-
-
-
-
-
-
-
-
-
-# 在现有配置文件中添加TFTP服务器配置
 tftp:
-  root_dir: "./bootfile"  # TFTP文件根目录
-  bind_ip: "0.0.0.0"      # 监听地址
-  port: 69                # TFTP端口
-  block_size: 512         # 数据块大小
-  timeout: 5              # 超时时间（秒）
-  retries: 5              # 重试次数
+  root_dir: "./bootfile"
+  bind_address: "0.0.0.0"
+  port: 69
+  status_check_interval: 5    # 状态检查间隔（秒）
+  startup_timeout: 30         # 启动超时时间（秒）
+  block_size: 512            # 数据块大小
+  retries: 5                 # 重试次数

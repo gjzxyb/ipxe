@@ -42,7 +42,7 @@ def setup_logging():
         file_handler.setFormatter(logging.Formatter(
             '%(asctime)s - %(levelname)s - %(message)s'
         ))
-        file_handler.setLevel(logging.DEBUG)  # 记录所有日志
+        file_handler.setLevel(logging.DEBUG)  # ��录所有日志
 
         # 创建控制台处理器 - 只记录重要信息
         if not ('pythonw.exe' in sys.executable and os.name == 'nt'):
@@ -224,15 +224,17 @@ class DHCPPacket:
         """Pack the DHCP packet into bytes"""
         try:
             # 基本头部
-            packed = struct.pack('!BBBBIHH',
+            packed = struct.pack('!BBBB',  # op, htype, hlen, hops
                 self.op,
                 self.htype,
                 self.hlen,
-                self.hops,
-                self.xid,
-                self.secs,
-                self.flags
+                self.hops
             )
+
+            # xid, secs, flags 单独打包
+            packed += struct.pack('!L', self.xid)  # 4字节
+            packed += struct.pack('!H', self.secs)  # 2字节
+            packed += struct.pack('!H', self.flags)  # 2字节
 
             # IP地址字段
             if isinstance(self.ciaddr, str):
@@ -394,10 +396,37 @@ class DHCPServer:
             pxe_config = self.config.get('pxe', {})
             self.pxe_enabled = pxe_config.get('enabled', False)
             self.tftp_server = pxe_config.get('tftp_server', self.server_ip)
-            self.default_boot_filename = pxe_config.get('default_boot_filename', '')
-            self.arch_specific_boot = {}
-            for arch_config in pxe_config.get('architecture_specific', []):
-                self.arch_specific_boot[str(arch_config.get('arch'))] = arch_config.get('boot_filename')
+            self.default_boot_filename = pxe_config.get('default_boot_filename', 'snponly.efi')
+            self.boot_files = pxe_config.get('boot_files', {})
+
+            # 将字符串键转换为整数
+            self.boot_files = {int(k, 16): v for k, v in self.boot_files.items()}
+
+            # 验证TFTP服务器配置
+            if self.pxe_enabled:
+                try:
+                    # 测试TFTP服务器连接
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    sock.settimeout(2)  # 增加超时时间
+
+                    # 发送TFTP读请求
+                    request = b'\x00\x01' + b'snponly.efi\x00' + b'octet\x00'
+                    sock.sendto(request, (self.tftp_server, 69))
+
+                    # 等待响应
+                    try:
+                        data, server = sock.recvfrom(516)  # TFTP数据包最大516字节
+                        if data[1] == 3:  # DATA包
+                            log_message(f"TFTP服务器配置验证成功: {self.tftp_server}")
+                        elif data[1] == 5:  # ERROR包
+                            error_msg = data[4:].decode('ascii').rstrip('\x00')
+                            log_message(f"TFTP服务器返回错误: {error_msg}", logging.WARNING)
+                    except socket.timeout:
+                        log_message("TFTP服务器响应超时", logging.WARNING)
+
+                    sock.close()
+                except Exception as e:
+                    log_message(f"TFTP服务器配置验证失败: {str(e)}", logging.WARNING)
 
             # 代理模式配置
             proxy_config = self.config.get('proxy_mode', {})
@@ -428,7 +457,7 @@ class DHCPServer:
             self.status_thread = None
             self.status_check_interval = 60
 
-            # 加载现有租约
+            # 加载有租约
             self.load_leases()
 
             # 添加 ProxyDHCP 支持
@@ -461,7 +490,7 @@ class DHCPServer:
             # 启动服务器
             self.running = True
 
-            # 启动状态检查线程
+            # 启动状态检���线程
             self.status_check_thread = threading.Thread(target=self.check_client_status)
             self.status_check_thread.daemon = True
             self.status_check_thread.start()
@@ -565,7 +594,7 @@ class DHCPServer:
                 json.dump(active_leases, f, indent=2, ensure_ascii=False)
                 f.write('\n')  # 添加最后的换行符
 
-            log_message(f"保存 {len(active_leases)} 个活动租约")
+            log_message(f"保存 {len(active_leases)} 个活动约")
 
         except Exception as e:
             log_message(f"保存租约失败: {str(e)}", logging.ERROR)
@@ -620,29 +649,42 @@ class DHCPServer:
         """根据客户端架构获取引导文件名"""
         try:
             arch = int.from_bytes(client_arch, byteorder='big') if isinstance(client_arch, bytes) else client_arch
-            logging.info(f"Getting boot filename for architecture: {arch}")
+            logging.info(f"获取客户端架构对应的启动文件: {arch}")
 
-            # 根据架构选择合适的引导文件
-            if arch in [0x0000, 0x0006]:  # BIOS/x86
-                boot_file = 'undionly.kpxe'
-            elif arch == 0x0007:  # UEFI x64
-                boot_file = 'snponly.efi'
-            elif arch == 0x0009:  # UEFI x86
-                boot_file = 'ipxe.efi'  # 使用 ipxe.efi 替代 ipxe-ia32.efi
-            else:
-                boot_file = self.default_boot_filename
+            # 从配置中获取对应的启动文件
+            boot_file = self.boot_files.get(arch, self.default_boot_filename)
 
-            # 验证文件是否存在
-            if os.path.exists(os.path.join('bootfile', boot_file)):
-                logging.info(f"Selected boot file: {boot_file}")
+            # 检查文件是否存在
+            boot_path = os.path.join('bootfile', boot_file)
+            if os.path.exists(boot_path):
+                # 检查文件大小和权限
+                file_size = os.path.getsize(boot_path)
+                if file_size == 0:
+                    logging.error(f"启动文件大小为0: {boot_path}")
+                    return None
+
+                if not os.access(boot_path, os.R_OK):
+                    logging.error(f"启动文件权限不足: {boot_path}")
+                    return None
+
+                logging.info(f"找到启动文件: {boot_file} (大小: {file_size} 字节)")
                 return boot_file
             else:
-                logging.warning(f"Boot file not found: {boot_file}, using default")
-                return self.default_boot_filename
+                # 如果特定架构的文件不存在，尝试使用默认文件
+                if self.default_boot_filename:
+                    default_path = os.path.join('bootfile', self.default_boot_filename)
+                    if os.path.exists(default_path) and os.access(default_path, os.R_OK):
+                        file_size = os.path.getsize(default_path)
+                        if file_size > 0:
+                            logging.warning(f"使用默认启动文件: {self.default_boot_filename} (大小: {file_size} 字节)")
+                            return self.default_boot_filename
+
+                logging.error(f"未找到可用的启动文件")
+                return None
 
         except Exception as e:
-            logging.error(f"Error determining boot filename: {e}")
-            return self.default_boot_filename
+            logging.error(f"确定启动文件名时出错: {e}")
+            return None
 
     def get_interface_info(self):
         """Get interface information"""
@@ -658,14 +700,15 @@ class DHCPServer:
             if client_mac in self.leases:
                 lease = self.leases[client_mac]
                 if lease['expire'] > time.time():
+                    log_message(f"为客户端 {client_mac} 重用现有IP: {lease['ip']}")
                     return lease['ip']
+                else:
+                    log_message(f"客户端 {client_mac} 的租约已过期，重新分配IP")
 
             # 从可用IP池中分配新IP
             if self.available_ips:
-                # 确保返回的是字符串格式的IP地址
-                ip = self.available_ips.pop(0)
+                ip = self.available_ips[0]  # 不立即移除IP，等待REQUEST确认后再移除
                 if isinstance(ip, int):
-                    # 如果是整数格式，转换为字符串格式
                     ip_obj = ipaddress.IPv4Address(ip)
                     return str(ip_obj)
                 return ip
@@ -681,13 +724,13 @@ class DHCPServer:
         allocated_ip = self.allocate_ip(client_mac)
 
         if not allocated_ip:
-            log_message(f"No available IP addresses for client {client_mac}")
+            log_message(f"没有可用的IP地址给客户端 {client_mac}", logging.ERROR)
             return None
 
         # 检查是否是PXE请求
         is_pxe = self.is_pxe_request(packet)
         if is_pxe:
-            log_message(f"Received PXE DISCOVER from {client_mac}")
+            log_message(f"收到PXE DISCOVER请求: {client_mac}")
 
         response = DHCPPacket()
         response.op = 2  # BOOTREPLY
@@ -695,8 +738,8 @@ class DHCPServer:
         response.hlen = packet.hlen
         response.xid = packet.xid
         response.secs = 0
-        response.flags = 0x8000  # 强制使用广播
-        response.yiaddr = allocated_ip  # 分配的IP地址
+        response.flags = packet.flags  # 保持与请求相同的标志
+        response.yiaddr = allocated_ip
         response.siaddr = socket.inet_aton(self.tftp_server)  # TFTP服务器IP
         response.giaddr = packet.giaddr
         response.chaddr = packet.chaddr
@@ -715,46 +758,50 @@ class DHCPServer:
 
         # 处理PXE请求
         if self.pxe_enabled and is_pxe:
-            client_arch = packet.options.get(93, b'\x00\x00')
-            arch_code = int.from_bytes(client_arch, byteorder='big')
-            log_message(f"PXE client architecture: {arch_code}")
+            client_arch = packet.options.get(93, [0])[0]
+            arch_code = client_arch if isinstance(client_arch, int) else client_arch[0]
 
-            # 设置引导文件
-            boot_file = self.get_boot_filename(client_arch)
+            # 修改引导文件处理
+            boot_file = self.get_boot_filename(arch_code)
             if boot_file:
+                # 设置引导文件和TFTP服务器
                 response.file = boot_file.encode('ascii') + b'\x00' * (128 - len(boot_file))
+                response.siaddr = socket.inet_aton(self.tftp_server)
+                response.sname = self.tftp_server.encode('ascii') + b'\x00' * (64 - len(self.tftp_server))
+                log_message(f"设置PXE引导文件: {boot_file} 给客户端 {client_mac}")
 
-            # PXE 特定选项
-            pxe_options = bytearray()
+                # 修改 PXE 特定选项
+                options.update({
+                    60: b'PXEClient',
+                    66: self.tftp_server.encode('ascii'),  # TFTP服务器名称
+                    67: boot_file.encode('ascii'),  # 引导文件名
+                    43: struct.pack('!BB',  # 简化 PXE 选项
+                        6,          # PXE Discovery Control
+                        1,          # PXE Boot Menu
+                    )
+                })
 
-            # Discovery Control
-            pxe_options.extend(bytes([6, 1, 3]))  # 使用广播
+                # 添加块大小和超时选项
+                options.update({
+                    57: struct.pack('!H', 1468),  # Maximum DHCP message size
+                    59: struct.pack('!B', 6),     # Boot file size in 512 byte chunks
+                    13: struct.pack('!H', 3)      # Boot file size in seconds
+                })
 
-            # Discovery Server List
-            server_ip_bytes = socket.inet_aton(self.tftp_server)
-            pxe_options.extend(bytes([8, 7]))  # 选项 8，长度 7
-            pxe_options.extend(bytes([0x80]))  # Type (1000 0000)
-            pxe_options.extend(bytes([0, 0, 0, 0]))  # Layer
-            pxe_options.extend(server_ip_bytes)  # Server IP
-
-            # Boot Server List
-            pxe_options.extend(bytes([9, 7]))  # 选项 9，长度 7
-            pxe_options.extend(bytes([0x80]))  # Type (1000 0000)
-            pxe_options.extend(bytes([0, 0, 0, 0]))  # Layer
-            pxe_options.extend(server_ip_bytes)  # Server IP
-
-            # 添加PXE选项
-            options.update({
-                60: b'PXEClient',  # Vendor Class Identifier
-                66: self.tftp_server.encode('ascii'),  # TFTP Server Name
-                67: boot_file.encode('ascii') if boot_file else self.default_boot_filename.encode('ascii'),  # Bootfile Name
-                43: bytes(pxe_options)  # PXE Vendor Options
-            })
-
-            log_message(f"PXE boot configuration: TFTP={self.tftp_server}, File={boot_file}")
+                log_message(f"PXE配置: TFTP={self.tftp_server}, 文件={boot_file}, 架构={arch_code}")
 
         response.options = options
-        log_message(f"Sending DHCP OFFER to {client_mac} with IP {allocated_ip}")
+        log_message(f"发送DHCP OFFER到 {client_mac}, IP: {allocated_ip}")
+
+        # 临时保存这个IP分配
+        self.leases[client_mac] = {
+            'ip': allocated_ip,
+            'expire': time.time() + self.lease_time,
+            'status': '待确认',
+            'is_pxe': is_pxe
+        }
+        self.save_leases()
+
         return response
 
     def handle_request(self, packet):
@@ -764,17 +811,18 @@ class DHCPServer:
         # 检查是否是PXE请求
         is_pxe = self.is_pxe_request(packet)
         if is_pxe:
-            log_message(f"Received PXE REQUEST from {client_mac}")
+            log_message(f"收到PXE REQUEST请求: {client_mac}")
 
         # 获取请求的IP地址
         requested_ip = None
         if 50 in packet.options:  # Option 50: Requested IP Address
             requested_ip = socket.inet_ntoa(packet.options[50])
-        elif packet.ciaddr != b'\x00\x00\x00\x00':
-            requested_ip = socket.inet_ntoa(packet.ciaddr)
+        elif packet.ciaddr != '0.0.0.0':
+            requested_ip = packet.ciaddr
 
         # 验证请求
         if not self.validate_request(client_mac, requested_ip):
+            log_message(f"拒绝客户端 {client_mac} 的IP请求: {requested_ip}", logging.WARNING)
             return self.handle_nak(packet)
 
         response = DHCPPacket()
@@ -783,7 +831,7 @@ class DHCPServer:
         response.hlen = packet.hlen
         response.xid = packet.xid
         response.secs = 0
-        response.flags = 0x8000  # 强制使用广播
+        response.flags = packet.flags  # 保持与请求相同的标志
         response.yiaddr = requested_ip
         response.siaddr = socket.inet_aton(self.tftp_server)  # TFTP服务器IP
         response.giaddr = packet.giaddr
@@ -808,42 +856,50 @@ class DHCPServer:
 
         # 处理PXE请求
         if self.pxe_enabled and is_pxe:
-            client_arch = packet.options.get(93, b'\x00\x00')
-            arch_code = int.from_bytes(client_arch, byteorder='big')
+            client_arch = packet.options.get(93, [0])[0]
+            arch_code = client_arch if isinstance(client_arch, int) else client_arch[0]
 
             # 设置引导文件
-            boot_file = self.get_boot_filename(client_arch)
+            boot_file = self.get_boot_filename(arch_code)
             if boot_file:
                 response.file = boot_file.encode('ascii') + b'\x00' * (128 - len(boot_file))
+                response.siaddr = socket.inet_aton(self.tftp_server)
+                log_message(f"设置PXE引导文件: {boot_file} 给客户端 {client_mac}")
 
-            # PXE 特定选项
-            pxe_options = bytearray()
+                # PXE 特定选项
+                options.update({
+                    60: b'PXEClient',
+                    66: self.tftp_server.encode('ascii'),  # TFTP服务器名称
+                    67: boot_file.encode('ascii'),  # 引导文件名
+                    43: struct.pack('!BB',  # 简化 PXE 选项
+                        6,          # PXE Discovery Control
+                        1,          # PXE Boot Menu
+                    )
+                })
 
-            # Discovery Control
-            pxe_options.extend(bytes([6, 1, 3]))  # 使用广播
-
-            # Boot Server
-            pxe_options.extend(bytes([8, 7]))  # 选项 8，长度 7
-            pxe_options.extend(bytes([0x80]))  # Type (1000 0000)
-            pxe_options.extend(bytes([0, 0, 0, 0]))  # Layer
-            pxe_options.extend(socket.inet_aton(self.tftp_server))  # Server IP
-
-            # 添加PXE选项
-            options.update({
-                60: b'PXEClient',  # Vendor Class Identifier
-                66: self.tftp_server.encode('ascii'),  # TFTP Server Name
-                67: boot_file.encode('ascii') if boot_file else self.default_boot_filename.encode('ascii'),  # Bootfile Name
-                43: bytes(pxe_options)  # PXE Vendor Options
-            })
-
-            log_message(f"PXE boot configuration: TFTP={self.tftp_server}, File={boot_file}")
+                log_message(f"PXE配置: TFTP={self.tftp_server}, 文件={boot_file}, 架构={arch_code}")
 
         response.options = options
 
-        # 更新租约
+        # 更新租约并从可用IP池中移除已分配的IP
         try:
-            self.update_lease(client_mac, requested_ip, packet if is_pxe else False)
-            log_message(f"Sent DHCP ACK to {client_mac} for IP {requested_ip}")
+            if client_mac in self.leases and self.leases[client_mac]['ip'] == requested_ip:
+                # 如果这个IP是我们之前配的，从可用池中移除
+                if requested_ip in self.available_ips:
+                    self.available_ips.remove(requested_ip)
+
+                self.leases[client_mac].update({
+                    'expire': time.time() + self.lease_time,
+                    'status': '在线',
+                    'is_pxe': is_pxe,
+                    'last_seen': time.time()
+                })
+                self.save_leases()
+                log_message(f"确认分配IP {requested_ip} 给客户端 {client_mac}")
+            else:
+                log_message(f"警告: 客户端 {client_mac} 请求未分配的IP {requested_ip}", logging.WARNING)
+
+            log_message(f"发送DHCP ACK到 {client_mac}, IP: {requested_ip}")
         except Exception as e:
             log_message(f"更新租约失败: {str(e)}", logging.ERROR)
 
@@ -867,7 +923,7 @@ class DHCPServer:
             discover = DHCPPacket()
             discover.op = 1  # BOOTREQUEST
             discover.htype = 1  # Ethernet
-            discover.hlen = 6   # MAC地址长度
+            discover.hlen = 6   # MAC地��长度
             discover.xid = random.randint(0, 0xFFFFFFFF)
             discover.flags = 0x8000  # 广播标志
             discover.ciaddr = '0.0.0.0'
@@ -1025,26 +1081,21 @@ class DHCPServer:
             if response:
                 try:
                     response_data = response.pack()
-                    if len(response_data) >= 240:
-                        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as send_sock:
-                            send_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-                            send_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                            try:
-                                send_sock.bind((self.server_ip, 0))
-                            except:
-                                send_sock.bind(('0.0.0.0', 0))
-                            send_sock.sendto(response_data, ('255.255.255.255', 68))
+                    # 发送响应到客户端
+                    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as send_sock:
+                        send_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                        send_sock.sendto(response_data, ('255.255.255.255', 68))
 
-                            # 更新租约状态
-                            if msg_type == 3 and response.options[53][0] == 5:  # REQUEST + ACK
-                                self.update_lease_status(client_mac, '在线')
+                        # 更新租约状态
+                        if msg_type == 3 and response.options[53][0] == 5:  # REQUEST + ACK
+                            self.update_lease_status(client_mac, '在线')
 
-                            # 使用 logging.debug 替代 log_message 来记录详细的响应信息
-                            if msg_type == 1:
-                                logging.debug(f"已发送DHCP OFFER响应到客户端 {client_mac} (广播方式)")
-                            else:
-                                msg_type = 'ACK' if response.options[53][0] == 5 else 'NAK'
-                                logging.debug(f"已发送DHCP {msg_type}响应到客户端 {client_mac} (广播方式)")
+                        # 使用 logging.debug 替代 log_message 来记录详细的响应信息
+                        if msg_type == 1:
+                            logging.debug(f"已发送DHCP OFFER响应到客户端 {client_mac} (广播方式)")
+                        else:
+                            msg_type = 'ACK' if response.options[53][0] == 5 else 'NAK'
+                            logging.debug(f"已发送DHCP {msg_type}响应到客户端 {client_mac} (广播方式)")
 
                 except Exception as e:
                     logging.error(f"发送DHCP响应失败: {str(e)}")
@@ -1165,7 +1216,7 @@ class DHCPServer:
         while self.running:
             try:
                 self.cleanup_expired_leases()
-                time.sleep(60)  # 每分钟检查一次
+                time.sleep(60)  # 每分钟检查���次
             except Exception as e:
                 log_message(f"检查客户端状态时出错: {str(e)}", logging.ERROR)
                 time.sleep(5)
@@ -1216,7 +1267,7 @@ class DHCPServer:
                 # 7 = EFI x64, 9 = EFI x86
                 return arch in [7, 9]
 
-            # 检查用户类选项 (Option 77)
+            # 检查用户选项 (Option 77)
             if 77 in packet.options:
                 user_class = packet.options[77].decode('ascii', errors='ignore').lower()
                 return 'efi' in user_class
@@ -1319,7 +1370,7 @@ class DHCPServer:
             end_ip = ipaddress.IPv4Address(self.pool_end)
             return start_ip <= ip_addr <= end_ip
         except Exception as e:
-            log_message(f"检查IP���围时出错: {str(e)}", logging.ERROR)
+            log_message(f"检查IP围时出错: {str(e)}", logging.ERROR)
             return False
 
     def handle_nak(self, packet):
@@ -1357,7 +1408,7 @@ class DHCPServer:
     def validate_request(self, client_mac, requested_ip):
         """验证DHCP请求"""
         try:
-            # 检查是否有请求的IP地���
+            # 检查是否有请求的IP地址
             if not requested_ip:
                 log_message(f"客户端 {client_mac} 未指定请求的IP地址", logging.WARNING)
                 return False
@@ -1392,7 +1443,7 @@ if __name__ == '__main__':
             # 创建新的文件流
             log_file = open('dhcp_server.log', 'a', encoding='utf-8', buffering=1)
 
-            # 重定��标准输出和错误
+            # 重定标准输出和错误
             sys.stdout = log_file
             sys.stderr = log_file
 
@@ -1508,7 +1559,7 @@ if __name__ == '__main__':
             # 判断是否是子进程
             if len(sys.argv) > 1 and sys.argv[-1] == '--subprocess':
                 # 作为子进程运行时，直接启动服务器
-                setup_logging()  # 确保子进程也有正确的日志配置
+                setup_logging()  # 确保子进��也有正确的日志配置
                 server = DHCPServer(args.config)
                 write_pid()  # 写入实际运行服务的进程PID
                 server.start()
@@ -1662,7 +1713,7 @@ if __name__ == '__main__':
             if not stop_server():
                 sys.exit(1)
         elif args.action == 'restart':
-            log_message("执行重启命令...")
+            log_message("行重启命令...")
             if not stop_server():
                 sys.exit(1)
             time.sleep(2)

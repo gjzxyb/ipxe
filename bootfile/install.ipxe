@@ -1,0 +1,7 @@
+#!ipxe
+
+# 显示启动提示
+prompt --key 0x197e --timeout 2000 Press F12 to install Windows... || exit
+
+# 链接到主启动配置
+chain boot.ipxe
