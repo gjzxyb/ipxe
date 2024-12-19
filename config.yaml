@@ -15,13 +15,13 @@ options:
     - "8.8.8.8"
     - "8.8.4.4"
   domain_name: "local"
-  next_server: "192.168.1.88"  # 添加next-server选项
-  vendor_specific_information: ""  # 添加vendor特定信息
+  next_server: "192.168.1.88"  # TFTP服务器地址
+  filename: "undionly.kpxe"    # 修改为BIOS默认启动文件
 
 pxe:
   enabled: true
   tftp_server: "192.168.1.88"
-  default_boot_filename: "snponly.efi"
+  default_boot_filename: "undionly.kpxe"  # 修改为BIOS默认启动文件
   architecture_specific:
     - arch: 0  # BIOS
       boot_filename: "undionly.kpxe"
@@ -40,7 +40,9 @@ tftp:
   root_dir: "./bootfile"
   bind_address: "0.0.0.0"
   port: 69
-  status_check_interval: 5    # 状态检查间隔（秒）
-  startup_timeout: 30         # 启动超时时间（秒）
-  block_size: 512            # 数据块大小
-  retries: 5                 # 重试次数
+  status_check_interval: 5
+  startup_timeout: 30
+  block_size: 512
+  timeout: 5
+  retries: 5
+  log_level: "DEBUG"

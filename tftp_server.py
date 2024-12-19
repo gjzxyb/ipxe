@@ -16,20 +16,26 @@ import ctypes
 def setup_logging():
     """设置日志配置"""
     try:
-        # 确保日志目录存在
-        log_dir = os.path.dirname('tftp_server.log')
-        if log_dir and not os.path.exists(log_dir):
-            os.makedirs(log_dir)
+        # 从配置文件读取日志级别
+        with open('config.yaml', 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+            log_level = config.get('tftp', {}).get('log_level', 'INFO')
 
-        # 配置日志格式
+        # 转换日志级别字符串为常量
+        numeric_level = getattr(logging, log_level.upper(), logging.INFO)
+
+        # 配置日志
         logging.basicConfig(
-            level=logging.DEBUG,
+            level=numeric_level,
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
                 logging.FileHandler('tftp_server.log', encoding='utf-8'),
                 logging.StreamHandler()
             ]
         )
+
+        # 设置第三方库的日志级别
+        logging.getLogger('tftpy').setLevel(logging.WARNING)
 
     except Exception as e:
         print(f"设置日志失败: {e}")
@@ -54,7 +60,7 @@ class TFTPServerWrapper:
                 self.bind_address = tftp_config.get('bind_address', '0.0.0.0')
                 self.port = tftp_config.get('port', 69)
 
-                # 从配置文件加载状态检查间隔
+                # 从配置文件加载间隔设置
                 self.status_check_interval = tftp_config.get('status_check_interval', 5)
                 self.startup_timeout = tftp_config.get('startup_timeout', 30)
 
@@ -69,48 +75,121 @@ class TFTPServerWrapper:
             raise
 
     def _handle_file_request(self, filename):
-        """处理文件请求的回调函数"""
+        """处理文件请求"""
         try:
             self.logger.info(f"收到文件请求: {filename}")
+
+            # 处理相对路径
+            if filename.startswith('/'):
+                filename = filename[1:]
+
             file_path = os.path.join(self.root_dir, filename)
+            file_path = os.path.normpath(file_path)
+
+            # 安全检查
+            if not file_path.startswith(self.root_dir):
+                self.logger.error(f"非法路径访问: {filename}")
+                return None
 
             # 检查文件是否存在
             if not os.path.exists(file_path):
                 self.logger.error(f"请求的文件不存在: {file_path}")
+                # 列出目录内容以帮助调试
+                self.logger.debug(f"目录内容: {os.listdir(self.root_dir)}")
                 return None
 
-            # 检查文件权限
-            if not os.access(file_path, os.R_OK):
-                self.logger.error(f"文件访问权限不足: {file_path}")
+            # 检查文件权限和属性
+            try:
+                # 获取文件属性
+                file_stat = os.stat(file_path)
+                self.logger.debug(f"文件属性: 大小={file_stat.st_size}, "
+                                f"权限={oct(file_stat.st_mode)}, "
+                                f"所有者={file_stat.st_uid}")
+
+                # 检查文件权限
+                if not os.access(file_path, os.R_OK):
+                    self.logger.error(f"文件访问权限不足: {file_path}")
+                    return None
+
+                # 检查文件大小
+                if file_stat.st_size == 0:
+                    self.logger.error(f"文件大小为0: {file_path}")
+                    return None
+
+                # 尝试打开并读取文件
+                with open(file_path, 'rb') as f:
+                    # 读取文件头部以验证文件完整性
+                    header = f.read(4)
+                    f.seek(0)
+                    self.logger.debug(f"文件头部(hex): {header.hex()}")
+
+                self.logger.info(f"开始传输文件: {filename} "
+                               f"(大小: {file_stat.st_size} 字节)")
+
+                # 记录传输开始
+                self.current_transfer = {
+                    'filename': filename,
+                    'size': file_stat.st_size,
+                    'start_time': time.time(),
+                    'retries': 0,
+                    'max_retries': 5,
+                    'block_size': self.server.block_size
+                }
+
+                return file_path
+
+            except IOError as e:
+                self.logger.error(f"文件访问错误: {e}")
                 return None
-
-            file_size = os.path.getsize(file_path)
-            self.logger.info(f"开始传输文件: {filename} (大小: {file_size} 字节)")
-
-            # 记录传输开始
-            self.current_transfer = {
-                'filename': filename,
-                'size': file_size,
-                'start_time': time.time()
-            }
-
-            return file_path
 
         except Exception as e:
             self.logger.error(f"处理文件请求时出错: {e}")
             return None
 
     def _run_server(self):
-        """运行服务器的线程函数"""
-        try:
-            self.logger.info(f"服务器线程启动，监听地址: {self.bind_address}:{self.port}")
-            self.server.listen(self.bind_address, self.port)
-        except Exception as e:
-            self.logger.error(f"服务器运行出错: {e}")
-            self.running = False
+        """运行服务器线程"""
+        while self.running:
+            try:
+                self.logger.info(f"服务器线程启动，监听地址: {self.bind_address}:{self.port}")
+
+                # 创建服务器实例
+                self.server = tftpy.TftpServer(self.root_dir)
+                self.server.dyn_file_func = self._handle_file_request
+
+                # 从配置文件读取TFTP设置
+                with open('config.yaml', 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f)
+                    tftp_config = config.get('tftp', {})
+
+                # 设置服务器选项
+                self.server.timeout = tftp_config.get('timeout', 5)
+                self.server.retries = tftp_config.get('retries', 5)
+                self.server.block_size = tftp_config.get('block_size', 512)
+
+                # 禁用TFTP选项协商，使用标准传输模式
+                self.server.use_tsize = False
+                self.server.use_blksize = False
+                self.server.use_timeout = False
+
+                # 启动服务器
+                self.server.listen(self.bind_address, self.port)
+
+            except socket.error as e:
+                if e.errno == 10054:  # 连接被重置
+                    self.logger.warning("连接被重置，正在重试...")
+                    time.sleep(1)
+                    continue
+                else:
+                    self.logger.error(f"服务器运行出错: {e}")
+                    self.running = False
+                    break
+            except Exception as e:
+                self.logger.error(f"服务器运行出错: {e}")
+                self.running = False
+                break
 
     def _status_check(self):
-        """状态��查线程"""
+        """状态检查线程"""
         while self.running:
             try:
                 # 检查当前传输状态
@@ -126,15 +205,15 @@ class TFTPServerWrapper:
                 # 检查服务器状态
                 if (self.server and hasattr(self.server, 'sock') and
                     self.server.sock and self.server.sock.fileno() != -1):
-                    self.update_status('running')
+                    self.update_status('运行中')
                 else:
-                    self.update_status('failed')
+                    self.update_status('失败')
                     self.running = False
                     break
 
             except Exception as e:
                 self.logger.error(f"状态检查出错: {e}")
-                self.update_status('failed')
+                self.update_status('失败')
                 self.running = False
                 break
 
@@ -176,16 +255,42 @@ class TFTPServerWrapper:
         """启动TFTP服务器"""
         try:
             self.logger.info("正在启动TFTP服务器...")
-            self.update_status('starting')
+
+            # 检查系统信息
+            self.logger.info(f"操作系统: {os.name}")
+            self.logger.info(f"Python版本: {sys.version}")
+            self.logger.info(f"当前工作目录: {os.getcwd()}")
+            self.logger.info(f"TFTP根目录: {os.path.abspath(self.root_dir)}")
+
+            # 检查文件权限
+            for file in os.listdir(self.root_dir):
+                file_path = os.path.join(self.root_dir, file)
+                stat = os.stat(file_path)
+                self.logger.info(f"文件 {file}: 大小={stat.st_size}, "
+                               f"权限={oct(stat.st_mode)}, "
+                               f"所有者={stat.st_uid}")
+
+            self.update_status('启动中')
+
+            # 列出并验证启动文件
+            boot_files = ['undionly.kpxe', 'boot.ipxe', 'install.ipxe']
+            for file in boot_files:
+                file_path = os.path.join(self.root_dir, file)
+                if os.path.exists(file_path):
+                    size = os.path.getsize(file_path)
+                    self.logger.info(f"启动文件 {file} 存在 (大小: {size} 字节)")
+                else:
+                    self.logger.warning(f"启动文件 {file} 不存在")
 
             # 检查端口是否被占用
             try:
                 test_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                test_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 test_socket.bind((self.bind_address, self.port))
                 test_socket.close()
             except Exception as e:
                 self.logger.error(f"端口 {self.port} 已被占用: {e}")
-                self.update_status('failed')
+                self.update_status('失败')
                 raise Exception(f"端口 {self.port} 已被占用")
 
             # 检查根目录
@@ -197,10 +302,6 @@ class TFTPServerWrapper:
             files = os.listdir(self.root_dir)
             self.logger.info(f"可用文件列表: {files}")
 
-            # 创建服务器
-            self.server = tftpy.TftpServer(self.root_dir)
-            self.server.dyn_file_func = self._handle_file_request
-
             # 启动服务器
             self.running = True
             server_thread = threading.Thread(target=self._run_server)
@@ -210,7 +311,7 @@ class TFTPServerWrapper:
             # 等待服务器启动
             if not self.wait_for_server_start():
                 self.logger.error("服务器启动超时")
-                self.update_status('failed')
+                self.update_status('失败')
                 self.running = False
                 raise Exception("TFTP服务器启动超时")
 
@@ -220,7 +321,7 @@ class TFTPServerWrapper:
             status_thread.start()
 
             self.logger.info(f"TFTP服务器已启动: {self.bind_address}:{self.port}")
-            self.update_status('running')
+            self.update_status('运行中')
 
             # 保持主线程运行
             while self.running:
@@ -228,7 +329,7 @@ class TFTPServerWrapper:
 
         except Exception as e:
             self.logger.error(f"启动服务器失败: {e}")
-            self.update_status('failed')
+            self.update_status('失败')
             self.running = False
             raise
 
@@ -239,10 +340,10 @@ class TFTPServerWrapper:
             try:
                 self.server.stop()
                 self.logger.info("TFTP服务器已停止")
-                self.update_status('stopped')
+                self.update_status('已停止')
             except Exception as e:
-                self.logger.error(f"停止服务器时出错: {e}")
-                self.update_status('failed')
+                self.logger.error(f"停止服务器时错: {e}")
+                self.update_status('失败')
 
 def get_server_status():
     """获取服务器状态"""
@@ -274,23 +375,24 @@ def main():
         logging.error("需要管理员权限才能运行TFTP服务器")
         sys.exit(1)
 
-    parser = argparse.ArgumentParser(description='TFTP Server')
+    parser = argparse.ArgumentParser(description='TFTP服务器')
     parser.add_argument('-c', '--config', default='config.yaml',
-                      help='Configuration file path (default: config.yaml)')
+                      help='配置文件路径 (默认: config.yaml)')
     parser.add_argument('action', choices=['start', 'stop', 'restart'],
-                      help='Action to perform: start, stop, or restart the server')
+                      help='执行操作: start(启动), stop(停止), restart(重启)')
     args = parser.parse_args()
 
     # PID文件路径
-    if os.name == 'nt':
+    if os.name == 'nt':  # Windows系统
         pid_dir = os.path.join(tempfile.gettempdir(), 'tftp_server')
         os.makedirs(pid_dir, exist_ok=True)
         pid_file = os.path.join(pid_dir, 'tftp_server.pid')
-    else:
+    else:  # Unix/Linux系统
         pid_file = '/var/run/tftp_server.pid' if os.geteuid() == 0 else \
                   os.path.join(tempfile.gettempdir(), 'tftp_server.pid')
 
     def write_pid():
+        """写入PID文件"""
         try:
             with open(pid_file, 'w') as f:
                 f.write(str(os.getpid()))
@@ -302,6 +404,7 @@ def main():
             sys.exit(1)
 
     def read_pid():
+        """读取PID文件"""
         try:
             with open(pid_file, 'r') as f:
                 return int(f.read().strip())
@@ -309,6 +412,7 @@ def main():
             return None
 
     def remove_pid():
+        """删除PID文件"""
         try:
             if os.path.exists(pid_file):
                 os.remove(pid_file)
@@ -318,11 +422,11 @@ def main():
 
     # 处理命令
     try:
-        if args.action == 'start':
+        if args.action == 'start':  # 启动服务器
             server = TFTPServerWrapper(args.config)
             write_pid()
             server.start()
-        elif args.action == 'stop':
+        elif args.action == 'stop':  # 停止服务器
             pid = read_pid()
             if pid:
                 try:
@@ -334,7 +438,7 @@ def main():
                 except Exception as e:
                     logging.error(f"停止服务器失败: {e}")
                     sys.exit(1)
-        elif args.action == 'restart':
+        elif args.action == 'restart':  # 重启服务器
             # 先停止
             pid = read_pid()
             if pid:
