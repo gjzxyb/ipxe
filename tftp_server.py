@@ -71,13 +71,18 @@ class TFTPServerWrapper:
                 self.logger.info(f"TFTP服务器配置加载完成: 根目录={self.root_dir}, 地址={self.bind_address}:{self.port}")
 
         except Exception as e:
-            self.logger.error(f"加载配置失败: {e}")
+            self.logger.error(f"加载配���失败: {e}")
             raise
 
     def _handle_file_request(self, filename):
         """处理文件请求"""
         try:
             self.logger.info(f"收到文件请求: {filename}")
+            self.logger.debug(f"客户端信息: {self.client_address}")
+
+            # 添加网卡驱动检测
+            if filename.endswith('.rom'):
+                self.logger.info(f"请求网卡驱动: {filename}")
 
             # 处理相对路径
             if filename.startswith('/'):
@@ -182,7 +187,7 @@ class TFTPServerWrapper:
                     break
 
     def _status_check(self):
-        """状态检查线程"""
+        """状态检查线���"""
         while self.running:
             try:
                 # 检查当前传输状态
@@ -213,7 +218,7 @@ class TFTPServerWrapper:
             time.sleep(self.status_check_interval)
 
     def update_status(self, status):
-        """��新服务器状态"""
+        """新服务器状态"""
         try:
             with open(self.status_file, 'w') as f:
                 json.dump({
@@ -245,7 +250,7 @@ class TFTPServerWrapper:
         return False
 
     def start(self):
-        """启动TFTP服务器"""
+        """启��TFTP服务器"""
         try:
             self.logger.info("正在启动TFTP服务器...")
 
@@ -273,7 +278,7 @@ class TFTPServerWrapper:
                     size = os.path.getsize(file_path)
                     self.logger.info(f"启动文件 {file} 存在 (大小: {size} 字节)")
                 else:
-                    self.logger.warning(f"启动文�� {file} 不存在")
+                    self.logger.warning(f"启动文件 {file} 不存在")
 
             # 检查端口是否占用
             try:
@@ -304,7 +309,7 @@ class TFTPServerWrapper:
             # 等待服务器启动
             if not self.wait_for_server_start():
                 self.logger.error("服务器启动超时")
-                self.update_status('失败')
+                self.update_status('失���')
                 self.running = False
                 raise Exception("TFTP服务器启动超时")
 

@@ -1,39 +1,100 @@
 #!ipxe
 
-# 设置超时
-set timeout 5000
+# 设置控制台
+console --x 1024 --y 768
+clear
+
+# 网卡初始化和调试信息
+echo Initializing network...
+show net0
+ifstat
+route
+
+# 如果网卡未被识别，尝试加载通用驱动
+isset ${net0/mac} || goto load_drivers
+
+:start
+# 清屏并设置控制台
+console --x 1024 --y 768
+clear
+
+# 设置基本变量
+set menu-timeout 5000
+set menu-default local
+
+# 设置HTTP服务器地址
+set http-server http://192.168.1.88:8080/pxe
+
+# 显示一些调试信息
+echo iPXE boot script starting...
+echo Server: ${http-server}
+echo Net0: ${net0/mac}
+echo IP: ${net0/ip}
 
 # 显示菜单
 menu iPXE Boot Menu
-item --gap -- ------------------------- Operating Systems ------------------------
+item
+item --gap --  ----------------------------------------- Operating Systems -----------------------------------------
 item local    Boot from local disk
-item --gap -- ------------------------- Network Boot ---------------------------
+item
+item --gap --  ----------------------------------------- Network Boot ---------------------------------------------
 item install  Install System
+item
+item --gap --  ----------------------------------------- Tools ---------------------------------------------------
 item shell    iPXE shell
 item reboot   Reboot
 item exit     Exit
+item
+echo
+echo MAC: ${net0/mac}
+echo IP: ${net0/ip}
 
 # 等待用户选择
-choose --timeout ${timeout} --default local selected || goto cancel
+choose --timeout ${menu-timeout} --default ${menu-default} selected && goto ${selected} || goto timeout
 
-# 处理选择
-goto ${selected}
-
+# 处理各种选项
 :local
-exit
+echo Booting from local disk...
+sanboot --no-describe --drive 0x80 || goto failed
 
 :install
-chain install.ipxe
+echo Chaining to install menu...
+chain ${http-server}/install.ipxe || goto failed
 
 :shell
-shell
+echo Dropping to iPXE shell...
+shell || goto failed
 
 :reboot
+echo Rebooting...
 reboot
 
 :exit
+echo Exiting iPXE...
 exit
 
-:cancel
-echo Boot cancelled
-exit
+:failed
+echo Boot failed
+echo Press any key to return to menu...
+prompt
+goto start
+
+:timeout
+echo Menu timeout
+goto start
+
+:load_drivers
+echo Loading network drivers...
+# 尝试加载常见网卡驱动
+rcload pcnet32.rom
+rcload rtl8169.rom
+rcload e1000.rom
+rcload tg3.rom
+# 重新检查网络
+autoboot net0 || goto failed
+
+:failed
+echo Network initialization failed
+echo Press any key to retry...
+prompt
+goto load_drivers

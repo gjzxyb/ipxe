@@ -1,7 +1,41 @@
 #!ipxe
 
-# 显示启动提示
-prompt --key 0x197e --timeout 2000 Press F12 to install Windows... || exit
+# 清屏并设置控制台
+console --x 1024 --y 768
+clear
 
-# 链接到主启动配置
-chain boot.ipxe
+# 设置HTTP服务器地址
+set http-server http://192.168.1.88:8080/pxe
+
+# 显示菜单标题
+:start
+menu PXE Installation Menu
+item
+item --gap -- ----------------------------------------- Available Systems -----------------------------------------
+
+# 从menu.cfg读取动态菜单项
+chain --autofree ${http-server}/pxe/menu.cfg ||
+
+item
+item --gap -- ----------------------------------------- Options -------------------------------------------------
+item back      Back to main menu
+item
+echo
+echo Current network info:
+echo MAC: ${net0/mac}
+echo IP: ${net0/ip}
+
+# 等待用户选择
+choose selected || goto back
+
+# 如果选择返回，则回到主菜单
+iseq ${selected} back && chain boot.ipxe ||
+
+# 处理选择 - 加载对应ID的配置
+chain ${http-server}/pxe/${selected}/boot.cfg || goto failed
+
+:failed
+echo Boot failed
+echo Press any key to return to menu...
+prompt
+goto start

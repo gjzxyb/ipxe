@@ -15,25 +15,28 @@ options:
     - "8.8.8.8"
     - "8.8.4.4"
   domain_name: "local"
-  next_server: "192.168.1.88"  # TFTP服务器地址
+  next_server: "192.168.1.88"
   filename: "undionly.kpxe"
+  additional_options:
+    - code: 66  # TFTP服务器名称
+      value: "192.168.1.88"
+    - code: 67  # 引导文件名
+      value: "undionly.kpxe"
+    - code: 150 # TFTP服务器地址
+      value: "192.168.1.88"
 
 pxe:
   enabled: true
   tftp_server: "192.168.1.88"
-  default_boot_filename: "undionly.kpxe"
+  default_boot_filename: "snponly.efi"
   architecture_specific:
     - arch: 0  # BIOS
-      boot_filename: "undionly.kpxe"
-    - arch: 6  # EFI IA32
-      boot_filename: "ipxe-ia32.efi"
+      boot_filename: "undionly.kpxe"    # 传统BIOS使用
     - arch: 7  # UEFI x64
-      boot_filename: "snponly.efi"
-    - arch: 9  # EFI x86
-      boot_filename: "ipxe.efi"
+      boot_filename: "snponly.efi"      # UEFI系统使用
   ipxe:
     enabled: true
-    http_server: "http://192.168.1.88:8080"  # 修改为与TFTP服务器相同的IP
+    http_server: "http://192.168.1.88:8080/pxe"
     boot_script: "boot.ipxe"
 
 tftp:
